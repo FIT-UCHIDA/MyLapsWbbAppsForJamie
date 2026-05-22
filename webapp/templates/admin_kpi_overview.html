@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Admin - KPI Overview{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="mb-0">KPI Settings Overview</h3>
+            <a href="{{ url_for('admin_page') }}" class="btn btn-outline-secondary btn-sm">&larr; Back to Admin</a>
+        </div>
+
+        <!-- グローバル KPI -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <strong>Global (default)</strong>
+                    <span class="badge bg-info ms-1">{{ global_modes }} modes</span>
+                </span>
+                <a href="{{ url_for('kpi_editor_page') }}" class="btn btn-sm btn-outline-primary">Edit (Visual)</a>
+            </div>
+        </div>
+
+        <!-- ユーザー別 KPI -->
+        {% if users_kpi %}
+        <div class="card">
+            <div class="card-header">User KPI Settings ({{ users_kpi | length }})</div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Username</th>
+                            <th style="width:80px;">Status</th>
+                            <th style="width:100px;">Modes</th>
+                            <th style="width:100px;">kpi.json</th>
+                            <th style="width:200px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in users_kpi %}
+                        <tr class="{{ '' if u.enabled else 'table-secondary' }}">
+                            <td class="align-middle">
+                                {{ u.username }}
+                                {% if not u.enabled %}
+                                <span class="text-muted small">(disabled)</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if u.enabled %}
+                                <span class="badge bg-success">ON</span>
+                                {% else %}
+                                <span class="badge bg-secondary">OFF</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if u.has_kpi %}
+                                <span class="badge bg-primary">{{ u.mode_count }} modes</span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if u.has_kpi %}
+                                {% if u.kpi_data == "INVALID JSON" %}
+                                <span class="badge bg-danger">INVALID</span>
+                                {% else %}
+                                <span class="badge bg-success">OK</span>
+                                {% endif %}
+                                {% else %}
+                                <span class="badge bg-warning">Missing</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('admin_user_edit', username=u.username) }}"
+                                   class="btn btn-sm btn-outline-primary">Edit JSON</a>
+                                <button class="btn btn-sm btn-outline-info"
+                                        onclick="showPreview('{{ u.username }}')">Preview</button>
+                            </td>
+                        </tr>
+                        <!-- Preview row (hidden) -->
+                        <tr id="preview-{{ u.username }}" style="display:none;">
+                            <td colspan="5" class="p-0">
+                                <div class="bg-light p-3">
+                                    <pre class="mb-0 small" style="max-height:300px; overflow-y:auto;">{% if u.kpi_data and u.kpi_data != "INVALID JSON" %}{{ u.kpi_data | tojson(indent=2) }}{% elif u.kpi_data == "INVALID JSON" %}[Invalid JSON - edit to fix]{% else %}[No kpi.json file]{% endif %}</pre>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-secondary">No users created yet.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showPreview(username) {
+    const row = document.getElementById('preview-' + username);
+    if (row.style.display === 'none') {
+        row.style.display = '';
+    } else {
+        row.style.display = 'none';
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,69 @@
+/* style.css — カスタムスタイル */
+
+/* 補完値（imputed）は赤字で表示 */
+.imputed {
+    color: #dc0000 !important;
+    font-weight: 500;
+}
+
+/* テーブルの交互行色（Bootstrap table-striped と連携） */
+#kpi-table tbody tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+/* 選択行のハイライト */
+#kpi-table tbody tr.selected,
+#kpi-table tbody tr.table-primary {
+    background-color: #cfe2ff !important;
+}
+
+/* テーブルセルの余白調整 */
+#kpi-table td,
+#kpi-table th {
+    padding: 4px 8px;
+    vertical-align: middle;
+}
+
+/* DataTables のスクロール時にヘッダーを固定表示 */
+.dataTables_scrollHead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+/* ナビゲーションバー */
+.navbar-brand {
+    font-weight: bold;
+}
+
+/* カードの影 */
+.card {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* 選手リスト内のチェックボックス */
+#player-list .form-check {
+    padding: 4px 0 4px 1.5em;
+}
+
+#player-list .form-check:hover {
+    background-color: #f0f0f0;
+}
+
+/* レスポンシブ対応 */
+@media (max-width: 768px) {
+    .container-fluid {
+        padding: 0 8px;
+    }
+
+    #kpi-table td,
+    #kpi-table th {
+        font-size: 12px;
+        padding: 2px 4px;
+    }
+}
+
+/* トースト通知 */
+#kpi-toast {
+    pointer-events: none;
+}

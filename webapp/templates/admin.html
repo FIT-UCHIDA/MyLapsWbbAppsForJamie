@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Admin - User Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <h3 class="mb-3">User Management</h3>
+
+        <!-- ユーザー追加 -->
+        <div class="card mb-4">
+            <div class="card-header">Add User</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin_add_user') }}" class="d-flex gap-2">
+                    <input type="text" class="form-control" name="username"
+                           placeholder="Username" required>
+                    <button type="submit" class="btn btn-primary text-nowrap">Add</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ユーザー一覧 -->
+        <div class="card">
+            <div class="card-header">Users ({{ users | length }})</div>
+            <div class="card-body p-0">
+                {% if users %}
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Username</th>
+                            <th style="width:100px;">Status</th>
+                            <th style="width:280px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr class="{{ '' if users_status.get(user, true) else 'table-secondary' }}">
+                            <td class="align-middle">
+                                {{ user }}
+                                {% if not users_status.get(user, true) %}
+                                <span class="text-muted small">(disabled)</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if users_status.get(user, true) %}
+                                <span class="badge bg-success">Enabled</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex gap-1">
+                                    <!-- Enable/Disable -->
+                                    <form method="POST" action="{{ url_for('admin_toggle_user', username=user) }}" class="d-inline">
+                                        {% if users_status.get(user, true) %}
+                                        <button type="submit" class="btn btn-sm btn-outline-warning">Disable</button>
+                                        {% else %}
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Enable</button>
+                                        {% endif %}
+                                    </form>
+                                    <!-- Edit JSON -->
+                                    <a href="{{ url_for('admin_user_edit', username=user) }}"
+                                       class="btn btn-sm btn-outline-primary">Edit JSON</a>
+                                    <!-- Delete -->
+                                    <form method="POST" action="{{ url_for('admin_delete_user', username=user) }}"
+                                          class="d-inline"
+                                          onsubmit="return confirm('Delete user \'{{ user }}\'?')">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted p-3 mb-0">No users yet. Add one above.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="mt-3 d-flex gap-2">
+            <a href="{{ url_for('admin_kpi_overview') }}" class="btn btn-outline-info">KPI Overview (All Users)</a>
+            <a href="{{ url_for('main_page') }}" class="btn btn-outline-secondary">&larr; Back to Main</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

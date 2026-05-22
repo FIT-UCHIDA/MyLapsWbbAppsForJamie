@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header text-center">
+                <!-- KEIRIN Pictogram -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 100 100" fill="none" class="mb-2">
+                    <circle cx="25" cy="72" r="16" stroke="#0d6efd" stroke-width="3" fill="none"/>
+                    <circle cx="75" cy="72" r="16" stroke="#0d6efd" stroke-width="3" fill="none"/>
+                    <line x1="25" y1="72" x2="48" y2="42" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="48" y1="42" x2="75" y2="72" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="25" y1="72" x2="48" y2="58" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="48" y1="58" x2="75" y2="72" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="48" y1="42" x2="44" y2="32" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="75" y1="72" x2="72" y2="40" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="72" y1="40" x2="65" y2="36" stroke="#0d6efd" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="44" y1="32" x2="62" y2="30" stroke="#333" stroke-width="4" stroke-linecap="round"/>
+                    <circle cx="66" cy="22" r="7" fill="#333"/>
+                    <line x1="48" y1="58" x2="38" y2="68" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="48" y1="58" x2="55" y2="66" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+                <h4 class="mb-0">Lap Time Analyzer</h4>
+                <small class="text-muted">Powered by HPCJC</small>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('login_page') }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">User:</label>
+                        <select name="username" id="username" class="form-select">
+                            <option value="">-- Global (default) --</option>
+                            {% for user in users %}
+                            <option value="{{ user }}">{{ user }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password:</label>
+                        <input type="password" class="form-control" id="password" name="password"
+                               placeholder="Enter password" required autofocus>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Login</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

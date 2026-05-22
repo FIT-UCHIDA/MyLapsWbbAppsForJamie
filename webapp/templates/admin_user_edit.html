@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Edit - {{ username }}{% endblock %}
+
+{% block head %}
+<style>
+    .json-editor {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 13px;
+        min-height: 300px;
+        resize: vertical;
+        tab-size: 2;
+    }
+    .editor-status {
+        font-size: 12px;
+        min-height: 20px;
+    }
+    .status-ok { color: #198754; }
+    .status-error { color: #dc3545; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="mb-0">{{ username }} - JSON Editor</h3>
+            <a href="{{ url_for('admin_page') }}" class="btn btn-outline-secondary btn-sm">&larr; Back to Admin</a>
+        </div>
+
+        <!-- settings.json -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>settings.json</span>
+                <div class="d-flex gap-2 align-items-center">
+                    <!-- アップロード -->
+                    <form method="POST" action="{{ url_for('admin_user_upload', username=username) }}"
+                          enctype="multipart/form-data" class="d-flex gap-1">
+                        <input type="hidden" name="type" value="settings">
+                        <input type="file" name="file" accept=".json" class="form-control form-control-sm" style="width:200px;">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Upload</button>
+                    </form>
+                    <button class="btn btn-sm btn-primary" onclick="saveJson('settings')">Save</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="formatJson('settings')">Format</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <textarea id="editor-settings" class="form-control json-editor border-0 rounded-0"
+                          oninput="validateJson('settings')">{{ settings_content }}</textarea>
+                <div id="status-settings" class="editor-status px-3 py-1 border-top"></div>
+            </div>
+        </div>
+
+        <!-- kpi.json -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>kpi.json</span>
+                <div class="d-flex gap-2 align-items-center">
+                    <form method="POST" action="{{ url_for('admin_user_upload', username=username) }}"
+                          enctype="multipart/form-data" class="d-flex gap-1">
+                        <input type="hidden" name="type" value="kpi">
+                        <input type="file" name="file" accept=".json" class="form-control form-control-sm" style="width:200px;">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Upload</button>
+                    </form>
+                    <button class="btn btn-sm btn-primary" onclick="saveJson('kpi')">Save</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="formatJson('kpi')">Format</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <textarea id="editor-kpi" class="form-control json-editor border-0 rounded-0"
+                          oninput="validateJson('kpi')">{{ kpi_content }}</textarea>
+                <div id="status-kpi" class="editor-status px-3 py-1 border-top"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const username = "{{ username }}";
+
+function validateJson(type) {
+    const editor = document.getElementById('editor-' + type);
+    const status = document.getElementById('status-' + type);
+    const content = editor.value.trim();
+
+    if (!content) {
+        status.textContent = '';
+        status.className = 'editor-status px-3 py-1 border-top';
+        return false;
+    }
+
+    try {
+        JSON.parse(content);
+        status.textContent = 'Valid JSON';
+        status.className = 'editor-status px-3 py-1 border-top status-ok';
+        return true;
+    } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.className = 'editor-status px-3 py-1 border-top status-error';
+        return false;
+    }
+}
+
+function formatJson(type) {
+    const editor = document.getElementById('editor-' + type);
+    try {
+        const parsed = JSON.parse(editor.value);
+        editor.value = JSON.stringify(parsed, null, 2);
+        validateJson(type);
+    } catch (e) {
+        alert('Cannot format: JSON is invalid.\n' + e.message);
+    }
+}
+
+function saveJson(type) {
+    const editor = document.getElementById('editor-' + type);
+    const content = editor.value.trim();
+
+    if (!validateJson(type)) {
+        if (!confirm('JSON syntax error detected. Save anyway?')) {
+            return;
+        }
+        // Even if user confirms, we still send it - server will reject if invalid
+    }
+
+    fetch('/admin/user/' + username + '/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({type: type, content: content})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            const status = document.getElementById('status-' + type);
+            status.textContent = 'Saved successfully!';
+            status.className = 'editor-status px-3 py-1 border-top status-ok';
+        } else {
+            alert('Save failed:\n' + (data.error || 'Unknown error'));
+            if (data.line) {
+                const status = document.getElementById('status-' + type);
+                status.textContent = `Error at line ${data.line}, col ${data.col}: ${data.msg}`;
+                status.className = 'editor-status px-3 py-1 border-top status-error';
+            }
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+// Tab key support in textarea
+document.querySelectorAll('.json-editor').forEach(editor => {
+    editor.addEventListener('keydown', function(e) {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const start = this.selectionStart;
+            const end = this.selectionEnd;
+            this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+            this.selectionStart = this.selectionEnd = start + 2;
+        }
+    });
+});
+
+// Initial validation
+document.addEventListener('DOMContentLoaded', function() {
+    validateJson('settings');
+    validateJson('kpi');
+});
+</script>
+{% endblock %}

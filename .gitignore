@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.pem
+.DS_Store
+webapp/users/
+webapp/users_config.json
+webapp/settings.json
+webapp/backups/
+AWS_testEc2/
+Key
+lap_app-main/

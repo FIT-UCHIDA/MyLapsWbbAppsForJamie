@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}KPI Settings Editor{% endblock %}
+
+{% block head %}
+<style>
+    .json-editor {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 13px;
+        min-height: 500px;
+        resize: vertical;
+        tab-size: 2;
+    }
+    .editor-status {
+        font-size: 12px;
+        min-height: 20px;
+    }
+    .status-ok { color: #198754; }
+    .status-error { color: #dc3545; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h3 class="mb-0">KPI Settings Editor</h3>
+                <small class="text-muted">
+                    Profile: <strong>{{ profile_label }}</strong>
+                    {% if is_global %}
+                    <span class="badge bg-secondary ms-1">Global</span>
+                    {% endif %}
+                </small>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('kpi_editor_page') }}" class="btn btn-outline-info btn-sm">Visual Editor</a>
+                <a href="{{ url_for('main_page') }}" class="btn btn-outline-secondary btn-sm">&larr; Back to Main</a>
+            </div>
+        </div>
+
+        <!-- kpi.json エディタ -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>kpi.json</span>
+                <div class="d-flex gap-2 align-items-center">
+                    <!-- アップロード -->
+                    <form method="POST" action="{{ url_for('my_kpi_upload') }}"
+                          enctype="multipart/form-data" class="d-flex gap-1">
+                        <input type="file" name="file" accept=".json" class="form-control form-control-sm" style="width:200px;">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Upload</button>
+                    </form>
+                    <button class="btn btn-sm btn-primary" onclick="saveKpi()">Save</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="formatKpi()">Format</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <textarea id="kpi-editor" class="form-control json-editor border-0 rounded-0"
+                          oninput="validateKpi()">{{ kpi_content }}</textarea>
+                <div id="kpi-status" class="editor-status px-3 py-1 border-top"></div>
+            </div>
+        </div>
+
+        <!-- ヘルプ -->
+        <div class="card">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#helpSection">
+                    Help - KPI JSON Structure
+                </a>
+            </div>
+            <div class="collapse" id="helpSection">
+                <div class="card-body">
+                    <pre class="mb-0 small"><code>{
+  "settings": {
+    "showAllColumns": true,
+    "showAllData": false,
+    "maxRows": 5
+  },
+  "training1": {
+    "mainKPI": "Time000to250",
+    "intervals": [
+      { "name": "Time000to625", "from": "0m_start", "to": "60m" },
+      { "name": "Time625to125", "from": "60m", "to": "100m" },
+      ...
+    ]
+  },
+  "training2": { ... }
+}</code></pre>
+                    <p class="mt-2 mb-0 small text-muted">
+                        Each mode (training1, training2, ...) contains intervals and an optional mainKPI.
+                        Intervals define track segments with "name", "from", and "to" points.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function validateKpi() {
+    const editor = document.getElementById('kpi-editor');
+    const status = document.getElementById('kpi-status');
+    const content = editor.value.trim();
+
+    if (!content) {
+        status.textContent = '';
+        status.className = 'editor-status px-3 py-1 border-top';
+        return false;
+    }
+
+    try {
+        JSON.parse(content);
+        status.textContent = 'Valid JSON';
+        status.className = 'editor-status px-3 py-1 border-top status-ok';
+        return true;
+    } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.className = 'editor-status px-3 py-1 border-top status-error';
+        return false;
+    }
+}
+
+function formatKpi() {
+    const editor = document.getElementById('kpi-editor');
+    try {
+        const parsed = JSON.parse(editor.value);
+        editor.value = JSON.stringify(parsed, null, 2);
+        validateKpi();
+    } catch (e) {
+        alert('Cannot format: JSON is invalid.\n' + e.message);
+    }
+}
+
+function saveKpi() {
+    const editor = document.getElementById('kpi-editor');
+    const content = editor.value.trim();
+
+    if (!validateKpi()) {
+        if (!confirm('JSON syntax error detected. Save anyway?')) {
+            return;
+        }
+    }
+
+    fetch('{{ url_for("my_kpi_save") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: content})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            const status = document.getElementById('kpi-status');
+            status.textContent = 'Saved successfully!';
+            status.className = 'editor-status px-3 py-1 border-top status-ok';
+        } else {
+            alert('Save failed:\n' + (data.error || 'Unknown error'));
+            if (data.line) {
+                const status = document.getElementById('kpi-status');
+                status.textContent = `Error at line ${data.line}, col ${data.col}: ${data.msg}`;
+                status.className = 'editor-status px-3 py-1 border-top status-error';
+            }
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+// Tab key support
+document.getElementById('kpi-editor').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 2;
+    }
+});
+
+// Ctrl+S shortcut
+document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveKpi();
+    }
+});
+
+// Initial validation
+document.addEventListener('DOMContentLoaded', validateKpi);
+</script>
+{% endblock %}

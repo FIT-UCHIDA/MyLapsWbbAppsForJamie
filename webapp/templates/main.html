@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Lap Time Analyzer - Main{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 mx-auto">
+        <h3 class="mb-3">Lap Time Visualizer</h3>
+
+        {% if current_user %}
+        <div class="alert alert-info py-2 d-flex justify-content-between align-items-center">
+            <span>Profile: <strong>{{ current_user }}</strong></span>
+            <a href="{{ url_for('select_user') }}" class="btn btn-sm btn-outline-primary">Change</a>
+        </div>
+        {% else %}
+        <div class="alert alert-secondary py-2 d-flex justify-content-between align-items-center">
+            <span>Profile: <strong>Global (default)</strong></span>
+            <a href="{{ url_for('select_user') }}" class="btn btn-sm btn-outline-secondary">Select User</a>
+        </div>
+        {% endif %}
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="start_datetime" class="form-label">Start Date (JST)</label>
+                    <input type="datetime-local" class="form-control" id="start_datetime"
+                           value="{{ start_datetime | replace(' ', 'T') }}" step="1">
+                </div>
+                <div class="mb-3">
+                    <label for="end_datetime" class="form-label">End Date (JST)</label>
+                    <input type="datetime-local" class="form-control" id="end_datetime"
+                           value="{{ end_datetime | replace(' ', 'T') }}" step="1">
+                </div>
+                <button id="btn-search" class="btn btn-primary w-100" onclick="loadPlayers()">
+                    Get players list
+                </button>
+            </div>
+        </div>
+
+        <div id="player-section" class="card mb-3" style="display:none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Players</span>
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="selectAllPlayers()">Select All</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllPlayers()">Deselect All</button>
+                </div>
+            </div>
+            <div class="card-body" id="player-list" style="max-height:400px; overflow-y:auto;">
+            </div>
+            <div class="card-footer">
+                <button id="btn-kpi" class="btn btn-success w-100" onclick="showKPI()">
+                    Show KPIs
+                </button>
+            </div>
+        </div>
+
+        <div id="loading" class="text-center" style="display:none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function formatDatetime(el) {
+    // datetime-local の値を "YYYY-MM-DD HH:MM:SS" に変換
+    let v = el.value; // "2025-01-09T00:00:00" or "2025-01-09T00:00"
+    if (!v) return '';
+    return v.replace('T', ' ').replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/, '$1:00');
+}
+
+function loadPlayers() {
+    const start = formatDatetime(document.getElementById('start_datetime'));
+    const end = formatDatetime(document.getElementById('end_datetime'));
+
+    if (!start || !end) {
+        alert('日付を指定してください');
+        return;
+    }
+
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('btn-search').disabled = true;
+
+    fetch('/api/players', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({start: start, end: end})
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('btn-search').disabled = false;
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        const list = document.getElementById('player-list');
+        list.innerHTML = '';
+
+        if (!data.players || data.players.length === 0) {
+            list.innerHTML = '<p class="text-muted">No players found for the specified period.</p>';
+            document.getElementById('player-section').style.display = 'block';
+            return;
+        }
+
+        data.players.forEach(p => {
+            const div = document.createElement('div');
+            div.className = 'form-check';
+            div.innerHTML = `
+                <input class="form-check-input player-check" type="checkbox"
+                       value="${p.id}" id="player_${p.id}">
+                <label class="form-check-label" for="player_${p.id}">
+                    ${p.last_name} ${p.first_name} (${p.id})
+                </label>
+            `;
+            list.appendChild(div);
+        });
+
+        document.getElementById('player-section').style.display = 'block';
+    })
+    .catch(err => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('btn-search').disabled = false;
+        alert('Error: ' + err.message);
+    });
+}
+
+function selectAllPlayers() {
+    document.querySelectorAll('.player-check').forEach(cb => cb.checked = true);
+}
+
+function deselectAllPlayers() {
+    document.querySelectorAll('.player-check').forEach(cb => cb.checked = false);
+}
+
+function showKPI() {
+    const checked = document.querySelectorAll('.player-check:checked');
+    if (checked.length === 0) {
+        alert('Please select at least one player');
+        return;
+    }
+
+    const ids = Array.from(checked).map(cb => cb.value).join(',');
+    const start = formatDatetime(document.getElementById('start_datetime'));
+    const end = formatDatetime(document.getElementById('end_datetime'));
+
+    const params = new URLSearchParams({start: start, end: end, ids: ids});
+    window.location.href = '/kpi?' + params.toString();
+}
+</script>
+{% endblock %}

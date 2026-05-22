@@ -1,0 +1,384 @@
+{% extends "base.html" %}
+{% block title %}Help{% endblock %}
+
+{% block content %}
+<div class="mb-2">
+    <a href="{{ url_for('main_page') }}" class="btn btn-outline-secondary btn-sm">&larr; Back to Main</a>
+</div>
+
+<h4>Help / Usage Guide</h4>
+
+<!-- 言語切替タブ -->
+<ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-en" data-bs-toggle="tab"
+                data-bs-target="#content-en" type="button" role="tab">English</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-jp" data-bs-toggle="tab"
+                data-bs-target="#content-jp" type="button" role="tab">Japanese</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+
+<!-- ===== English ===== -->
+<div class="tab-pane fade show active" id="content-en" role="tabpanel">
+
+<div class="accordion" id="help-en">
+
+    <!-- 1. Login -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#en-login">
+                1. Login &amp; User Selection
+            </button>
+        </h2>
+        <div id="en-login" class="accordion-collapse collapse show" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <ol>
+                    <li>Open the app URL in your browser.</li>
+                    <li>Select your user profile from the dropdown (or leave it blank for global settings).</li>
+                    <li>Enter the password and click <strong>Login</strong>.</li>
+                    <li>You can switch users later via <strong>Switch User</strong> in the navbar.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. KPI Display -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-kpi">
+                2. KPI Display
+            </button>
+        </h2>
+        <div id="en-kpi" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <ol>
+                    <li><strong>Date Range</strong>: Set start/end datetime on the main page, then click <strong>Fetch Players</strong>.</li>
+                    <li><strong>Player Selection</strong>: Check the players you want, then click <strong>Show KPI</strong>.</li>
+                    <li><strong>Mode</strong>: Switch between modes (e.g., "stand", "roll") using the Mode dropdown.</li>
+                    <li><strong>Show All Columns</strong>: Toggles display of all data columns (including raw timing data).</li>
+                    <li><strong>Show All Data</strong>: Shows data rows not filtered by mainKPI criteria.</li>
+                    <li><strong>Max Rows</strong>: Limits the number of rows per player.</li>
+                    <li><strong>Export to CSV</strong>: Downloads the current table as a CSV file.</li>
+                    <li><strong>Copy Selected (TSV)</strong>: Click rows to select (Ctrl+click for multiple), then click this button or press Ctrl+C to copy as tab-separated values.</li>
+                    <li><strong>Filter</strong>: Choose a column, set Min/Max, and click Apply Filter to narrow results.</li>
+                    <li><strong>Update to Latest</strong> (Ctrl+R): Refreshes the data from the database.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. KPI Editor -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-editor">
+                3. KPI Settings Editor
+            </button>
+        </h2>
+        <div id="en-editor" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <p>Two editing methods are available:</p>
+                <h6>Visual Editor (Edit KPI Setting button on KPI page)</h6>
+                <ul>
+                    <li>Add/remove modes and intervals using the GUI.</li>
+                    <li>Set <code>mainKPI</code> and <code>sortOrder</code> for each mode.</li>
+                    <li>Changes are saved with the <strong>Save</strong> button.</li>
+                </ul>
+                <h6>JSON Text Editor (KPI Settings in navbar)</h6>
+                <ul>
+                    <li>Directly edit the raw JSON text of your kpi.json file.</li>
+                    <li><strong>Validate</strong>: Checks JSON syntax before saving.</li>
+                    <li><strong>Format</strong>: Auto-formats (pretty-prints) the JSON.</li>
+                    <li><strong>Save</strong> (Ctrl+S): Validates and saves.</li>
+                    <li><strong>Upload</strong>: Upload a .json file from your computer.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Migration -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-migration">
+                4. Migrating KPI Settings from Old App
+            </button>
+        </h2>
+        <div id="en-migration" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <p>If you have a KPI configuration from the old desktop application:</p>
+                <ol>
+                    <li>Open the old app's <code>kpi.json</code> file in a text editor.</li>
+                    <li>Copy the entire JSON content.</li>
+                    <li>Go to <strong>KPI Settings</strong> in the navbar.</li>
+                    <li>Clear the text area and paste the copied JSON.</li>
+                    <li>Click <strong>Validate</strong> to check for errors.</li>
+                    <li>Click <strong>Save</strong>.</li>
+                </ol>
+                <p>Alternatively, use the <strong>Upload</strong> button to directly upload the .json file.</p>
+                <h6>JSON Structure Reference</h6>
+                <pre class="bg-light p-2 rounded"><code>{
+  "settings": {
+    "showAllColumns": true,
+    "showAllData": false,
+    "maxRows": 5
+  },
+  "stand": {
+    "intervals": [
+      {"start": "FP_start", "end": "0m_start", "label": "Time000to625"},
+      {"start": "0m_start", "end": "100m", "label": "Time000to100"}
+    ],
+    "mainKPI": "Time000to100",
+    "sortOrder": "asc"
+  }
+}</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. Backup -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-backup">
+                5. File Backup System
+            </button>
+        </h2>
+        <div id="en-backup" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <ul>
+                    <li>Every time you save or upload a KPI/settings file, a timestamped backup is automatically created.</li>
+                    <li>Backups are stored in a <code>backups/</code> subfolder next to the original file.</li>
+                    <li>Backup filenames include the date and time: <code>kpi_20260522_170300.json</code></li>
+                    <li>Up to <strong>50</strong> backups are kept per file. Older backups are automatically deleted.</li>
+                    <li>If you need to restore a previous version, contact your administrator.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. Admin -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-admin">
+                6. Admin Features
+            </button>
+        </h2>
+        <div id="en-admin" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <ul>
+                    <li><strong>Admin Login</strong>: Click "Admin" in the navbar and enter the admin password.</li>
+                    <li><strong>Add User</strong>: Enter a username and click Add. A new profile is created with a copy of the global settings.</li>
+                    <li><strong>Enable/Disable</strong>: Toggle user accounts on/off without deleting them.</li>
+                    <li><strong>Edit JSON</strong>: Directly edit a user's settings.json or kpi.json.</li>
+                    <li><strong>KPI Overview</strong>: View all users' KPI configurations at a glance.</li>
+                    <li><strong>Delete User</strong>: Permanently removes the user and all their settings.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 7. Version -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#en-version">
+                7. Version Information
+            </button>
+        </h2>
+        <div id="en-version" class="accordion-collapse collapse" data-bs-parent="#help-en">
+            <div class="accordion-body">
+                <p>The current application version is displayed in the footer of every page.</p>
+                {% if app_version %}
+                <p><strong>Current version:</strong> {{ app_version.commit }}
+                    {% if app_version.date %} ({{ app_version.date }}){% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+</div><!-- accordion -->
+</div><!-- tab-pane en -->
+
+<!-- ===== Japanese ===== -->
+<div class="tab-pane fade" id="content-jp" role="tabpanel">
+
+<div class="accordion" id="help-jp">
+
+    <!-- 1. ログイン -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#jp-login">
+                1. ログイン・ユーザー選択
+            </button>
+        </h2>
+        <div id="jp-login" class="accordion-collapse collapse show" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <ol>
+                    <li>ブラウザでアプリのURLを開きます。</li>
+                    <li>ドロップダウンからユーザープロファイルを選択します（空白の場合はグローバル設定を使用）。</li>
+                    <li>パスワードを入力して <strong>Login</strong> をクリックします。</li>
+                    <li>ナビバーの <strong>Switch User</strong> から後でユーザーを切り替えることもできます。</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. KPI表示 -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-kpi">
+                2. KPI表示
+            </button>
+        </h2>
+        <div id="jp-kpi" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <ol>
+                    <li><strong>日付範囲</strong>：メインページで開始/終了日時を設定し、<strong>Fetch Players</strong> をクリックします。</li>
+                    <li><strong>選手選択</strong>：表示したい選手にチェックを入れ、<strong>Show KPI</strong> をクリックします。</li>
+                    <li><strong>モード</strong>：ドロップダウンでモード（例："stand", "roll"）を切り替えます。</li>
+                    <li><strong>Show All Columns</strong>：全データ列（生のタイミングデータ含む）の表示を切り替えます。</li>
+                    <li><strong>Show All Data</strong>：mainKPI基準でフィルタリングされないデータ行も表示します。</li>
+                    <li><strong>Max Rows</strong>：選手ごとの表示行数を制限します。</li>
+                    <li><strong>Export to CSV</strong>：現在のテーブルをCSVファイルとしてダウンロードします。</li>
+                    <li><strong>Copy Selected (TSV)</strong>：行をクリックして選択（Ctrl+クリックで複数選択）、ボタンまたはCtrl+Cでタブ区切りでコピーします。</li>
+                    <li><strong>フィルタ</strong>：列を選択し、最小/最大値を設定して Apply Filter で結果を絞り込みます。</li>
+                    <li><strong>Update to Latest</strong>（Ctrl+R）：データベースから最新データを再取得します。</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. KPIエディタ -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-editor">
+                3. KPI設定エディタ
+            </button>
+        </h2>
+        <div id="jp-editor" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <p>2つの編集方法があります：</p>
+                <h6>ビジュアルエディタ（KPIページの「Edit KPI Setting」ボタン）</h6>
+                <ul>
+                    <li>GUIでモードや区間を追加・削除できます。</li>
+                    <li>各モードの <code>mainKPI</code> と <code>sortOrder</code> を設定できます。</li>
+                    <li><strong>Save</strong> ボタンで変更を保存します。</li>
+                </ul>
+                <h6>JSONテキストエディタ（ナビバーの「KPI Settings」）</h6>
+                <ul>
+                    <li>kpi.jsonファイルの生のJSONテキストを直接編集できます。</li>
+                    <li><strong>Validate</strong>：保存前にJSON構文をチェックします。</li>
+                    <li><strong>Format</strong>：JSONを整形（プリティプリント）します。</li>
+                    <li><strong>Save</strong>（Ctrl+S）：バリデーション後に保存します。</li>
+                    <li><strong>Upload</strong>：PCからJSONファイルをアップロードします。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. 移行 -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-migration">
+                4. 旧アプリからのKPI設定移行
+            </button>
+        </h2>
+        <div id="jp-migration" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <p>旧デスクトップアプリのKPI設定がある場合：</p>
+                <ol>
+                    <li>旧アプリの <code>kpi.json</code> ファイルをテキストエディタで開きます。</li>
+                    <li>JSON内容を全てコピーします。</li>
+                    <li>ナビバーの <strong>KPI Settings</strong> を開きます。</li>
+                    <li>テキストエリアの内容をクリアし、コピーしたJSONを貼り付けます。</li>
+                    <li><strong>Validate</strong> をクリックしてエラーがないか確認します。</li>
+                    <li><strong>Save</strong> をクリックして保存します。</li>
+                </ol>
+                <p>または、<strong>Upload</strong> ボタンで直接.jsonファイルをアップロードすることもできます。</p>
+                <h6>JSON構造リファレンス</h6>
+                <pre class="bg-light p-2 rounded"><code>{
+  "settings": {
+    "showAllColumns": true,
+    "showAllData": false,
+    "maxRows": 5
+  },
+  "stand": {
+    "intervals": [
+      {"start": "FP_start", "end": "0m_start", "label": "Time000to625"},
+      {"start": "0m_start", "end": "100m", "label": "Time000to100"}
+    ],
+    "mainKPI": "Time000to100",
+    "sortOrder": "asc"
+  }
+}</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. バックアップ -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-backup">
+                5. ファイルバックアップシステム
+            </button>
+        </h2>
+        <div id="jp-backup" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <ul>
+                    <li>KPI/設定ファイルを保存・アップロードするたびに、タイムスタンプ付きのバックアップが自動的に作成されます。</li>
+                    <li>バックアップは元ファイルと同じディレクトリの <code>backups/</code> サブフォルダに保存されます。</li>
+                    <li>バックアップファイル名には日付と時刻が含まれます：<code>kpi_20260522_170300.json</code></li>
+                    <li>ファイルごとに最大 <strong>50</strong> 件のバックアップが保持されます。古いバックアップは自動的に削除されます。</li>
+                    <li>以前のバージョンを復元する必要がある場合は、管理者にお問い合わせください。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. 管理機能 -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-admin">
+                6. 管理機能
+            </button>
+        </h2>
+        <div id="jp-admin" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <ul>
+                    <li><strong>管理者ログイン</strong>：ナビバーの「Admin」をクリックし、管理者パスワードを入力します。</li>
+                    <li><strong>ユーザー追加</strong>：ユーザー名を入力してAddをクリック。グローバル設定のコピーで新しいプロファイルが作成されます。</li>
+                    <li><strong>有効/無効</strong>：削除せずにユーザーアカウントのオン/オフを切り替えます。</li>
+                    <li><strong>JSON編集</strong>：ユーザーのsettings.jsonやkpi.jsonを直接編集します。</li>
+                    <li><strong>KPI一覧</strong>：全ユーザーのKPI設定を一覧表示します。</li>
+                    <li><strong>ユーザー削除</strong>：ユーザーと全設定を完全に削除します。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 7. バージョン情報 -->
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#jp-version">
+                7. バージョン情報
+            </button>
+        </h2>
+        <div id="jp-version" class="accordion-collapse collapse" data-bs-parent="#help-jp">
+            <div class="accordion-body">
+                <p>現在のアプリケーションバージョンは、全ページのフッターに表示されます。</p>
+                {% if app_version %}
+                <p><strong>現在のバージョン：</strong> {{ app_version.commit }}
+                    {% if app_version.date %} ({{ app_version.date }}){% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+</div><!-- accordion -->
+</div><!-- tab-pane jp -->
+
+</div><!-- tab-content -->
+{% endblock %}

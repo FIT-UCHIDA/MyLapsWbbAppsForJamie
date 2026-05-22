@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Edit KPI Settings{% endblock %}
+
+{% block content %}
+<div class="mb-2">
+    <button class="btn btn-outline-secondary btn-sm" onclick="history.back()">&larr; Back</button>
+</div>
+
+<h4>Edit KPI Settings</h4>
+
+<!-- トラック画像 -->
+<div class="text-center mb-3">
+    <img src="{{ url_for('track_image') }}" alt="Track Layout"
+         class="img-fluid" style="max-width:900px;"
+         onerror="this.style.display='none'">
+</div>
+
+<!-- モード選択 -->
+<div class="row g-2 align-items-center mb-3">
+    <div class="col-auto">
+        <label class="form-label mb-0">Mode:</label>
+    </div>
+    <div class="col-auto">
+        <select id="mode-select" class="form-select form-select-sm" onchange="refreshTable()">
+            {% for m in modes %}
+            <option value="{{ m }}">{{ m | capitalize }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+<!-- 区間定義テーブル -->
+<table class="table table-bordered table-sm" id="interval-table">
+    <thead class="table-light">
+        <tr>
+            <th>Display Name</th>
+            <th>Start</th>
+            <th>End</th>
+            <th style="width:60px;">Delete</th>
+        </tr>
+    </thead>
+    <tbody id="interval-body">
+    </tbody>
+</table>
+
+<!-- 追加用UI -->
+<div class="row g-2 align-items-center mb-3">
+    <div class="col-auto">
+        <label class="form-label mb-0">Start:</label>
+    </div>
+    <div class="col-auto">
+        <select id="add-start" class="form-select form-select-sm">
+            {% for p in available_points %}
+            <option value="{{ p }}">{{ p }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label mb-0">End:</label>
+    </div>
+    <div class="col-auto">
+        <select id="add-end" class="form-select form-select-sm">
+            {% for p in available_points %}
+            <option value="{{ p }}">{{ p }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label mb-0">Display Name:</label>
+    </div>
+    <div class="col-auto">
+        <input type="text" id="add-name" class="form-control form-control-sm"
+               placeholder="(start-end if empty)">
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="addInterval()">Add</button>
+    </div>
+</div>
+
+<!-- 保存ボタン -->
+<div class="d-flex gap-2">
+    <button class="btn btn-success" onclick="saveConfig()">Save and Back</button>
+    <button class="btn btn-outline-secondary" onclick="history.back()">Cancel</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// サーバーから渡されたデータ
+const modesData = {{ modes_data | tojson }};
+
+function currentMode() {
+    return document.getElementById('mode-select').value;
+}
+
+function refreshTable() {
+    const mode = currentMode();
+    const data = modesData[mode] || {intervals: []};
+    const tbody = document.getElementById('interval-body');
+    tbody.innerHTML = '';
+
+    (data.intervals || []).forEach((ent, idx) => {
+        const name = ent.name || `${ent.start}-${ent.end}`;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${name}</td>
+            <td>${ent.start || ''}</td>
+            <td>${ent.end || ''}</td>
+            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteInterval(${idx})">Del</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function addInterval() {
+    const mode = currentMode();
+    const start = document.getElementById('add-start').value;
+    const end = document.getElementById('add-end').value;
+    const name = document.getElementById('add-name').value.trim();
+
+    if (!start || !end) {
+        alert('Please select both start and end.');
+        return;
+    }
+
+    if (!modesData[mode]) {
+        modesData[mode] = {intervals: [], mainKPI: null};
+    }
+
+    const entry = {start: start, end: end};
+    if (name) entry.name = name;
+
+    modesData[mode].intervals.push(entry);
+    document.getElementById('add-name').value = '';
+    refreshTable();
+}
+
+function deleteInterval(idx) {
+    const mode = currentMode();
+    if (modesData[mode] && modesData[mode].intervals) {
+        modesData[mode].intervals.splice(idx, 1);
+        refreshTable();
+    }
+}
+
+function saveConfig() {
+    // kpi.json 全体を再構築（settingsは既存のものを保持）
+    const config = {settings: {{ kpi_settings | tojson }}};
+
+    // modesData からconfig を構築
+    for (const [mode, data] of Object.entries(modesData)) {
+        config[mode] = {
+            mainKPI: data.mainKPI || null,
+            intervals: data.intervals || []
+        };
+    }
+
+    fetch('/api/kpi_editor/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            alert('Saved successfully.');
+            history.back();
+        } else {
+            alert('Save failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+// 初期表示
+document.addEventListener('DOMContentLoaded', refreshTable);
+</script>
+{% endblock %}

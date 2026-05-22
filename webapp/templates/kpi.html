@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}KPI Display{% endblock %}
+
+{% block head %}
+<style>
+    #kpi-table th { white-space: nowrap; cursor: pointer; }
+    #kpi-table td { white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-2">
+    <a href="{{ url_for('main_page') }}" class="btn btn-outline-secondary btn-sm">&larr; Back to Main</a>
+</div>
+
+<h4>KPIs</h4>
+
+<!-- 上部コントロール -->
+<div class="row g-2 align-items-center mb-2">
+    <div class="col-auto">
+        <label class="form-label mb-0">Mode:</label>
+    </div>
+    <div class="col-auto">
+        <select id="mode-select" class="form-select form-select-sm" onchange="changeMode()">
+            {% for m in modes %}
+            <option value="{{ m }}" {% if m == current_mode %}selected{% endif %}>
+                {{ m | capitalize }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary" onclick="reloadKPI()" title="Ctrl+R">
+            Update to Latest
+        </button>
+    </div>
+    <div class="col-auto">
+        <a href="{{ url_for('kpi_editor_page') }}" class="btn btn-sm btn-outline-secondary">
+            Edit KPI Setting
+        </a>
+    </div>
+</div>
+
+<!-- 設定行 -->
+<div class="row g-2 align-items-center mb-2">
+    <div class="col-auto">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="chk-all-cols"
+                   {% if show_all_cols %}checked{% endif %} onchange="onSettingChanged()">
+            <label class="form-check-label" for="chk-all-cols">Show All Columns</label>
+        </div>
+    </div>
+    <div class="col-auto">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="chk-all-data"
+                   {% if show_all_data %}checked{% endif %} onchange="onSettingChanged()">
+            <label class="form-check-label" for="chk-all-data">Show All Data</label>
+        </div>
+    </div>
+    <div class="col-auto">
+        <label class="form-label mb-0">Max Rows:</label>
+    </div>
+    <div class="col-auto">
+        <select id="max-rows-select" class="form-select form-select-sm" style="width:80px;" onchange="onSettingChanged()">
+            {% for i in range(1, 21) %}
+            <option value="{{ i }}" {% if i == max_rows %}selected{% endif %}>{{ i }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto ms-auto">
+        <button class="btn btn-sm btn-outline-success" onclick="exportCSV()">Export to CSV</button>
+        <button class="btn btn-sm btn-outline-info" onclick="copySelectedRows()">Copy Selected (TSV)</button>
+    </div>
+</div>
+
+<!-- フィルタ行 -->
+<div class="row g-2 align-items-center mb-2" id="filter-row">
+    <div class="col-auto">
+        <label class="form-label mb-0">Filter Column:</label>
+    </div>
+    <div class="col-auto">
+        <select id="filter-col" class="form-select form-select-sm">
+            <option value="">-- None --</option>
+            {% for c in columns %}
+            <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <input type="number" id="filter-min" class="form-control form-control-sm"
+               placeholder="Min" step="any" style="width:100px;">
+    </div>
+    <div class="col-auto">
+        <input type="number" id="filter-max" class="form-control form-control-sm"
+               placeholder="Max" step="any" style="width:100px;">
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-outline-secondary" onclick="applyFilter()">Apply Filter</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="clearFilter()">Clear</button>
+    </div>
+</div>
+
+{% if empty %}
+<div class="alert alert-warning">No data found for the specified period and players.</div>
+{% else %}
+<!-- KPIテーブル -->
+<div class="table-responsive">
+    <table id="kpi-table" class="table table-striped table-bordered table-sm">
+        <thead class="table-dark">
+            <tr>
+                {% for col in columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                {% for cell in row %}
+                <td {% if cell.imputed %}class="imputed"{% endif %}>{{ cell.value }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- 隠しフィールド（パラメータ保持） -->
+<input type="hidden" id="param-start" value="{{ start }}">
+<input type="hidden" id="param-end" value="{{ end }}">
+<input type="hidden" id="param-ids" value="{{ ids }}">
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/kpi.js') }}?v=2"></script>
+<script>
+    // ページ読み込み後にDataTables初期化
+    document.addEventListener('DOMContentLoaded', function() {
+        initKpiTable();
+    });
+</script>
+{% endblock %}
