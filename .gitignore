@@ -9,6 +9,7 @@ webapp/users/
 webapp/users_config.json
 webapp/settings.json
 webapp/backups/
+ec2_archives/
 AWS_testEc2/
 Key
 lap_app-main/
