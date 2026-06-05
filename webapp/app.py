@@ -701,6 +701,11 @@ def kpi_page():
     # 表示列の決定
     kpi_cols = display_kpi_columns(mode, interval_config, df_all)
 
+    # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
+    simple_name_cols = list(NAME_COLUMNS)
+    if "SB1" in df_filtered.columns:
+        simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
+
     if show_all_cols:
         all_cols = [
             c for c in df_filtered.columns
@@ -716,7 +721,7 @@ def kpi_page():
                 columns.append(c)
                 seen.add(c)
     else:
-        columns = NAME_COLUMNS + kpi_cols
+        columns = simple_name_cols + kpi_cols
         columns = [
             c for c in columns
             if c in df_filtered.columns and not (c.startswith("imputed__") or c == "__row_id")
@@ -826,6 +831,11 @@ def api_export_csv():
 
     kpi_cols = display_kpi_columns(mode, interval_config, df_all)
 
+    # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
+    simple_name_cols = list(NAME_COLUMNS)
+    if "SB1" in df_filtered.columns:
+        simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
+
     if show_all_cols:
         all_cols = [c for c in df_filtered.columns if not (c.startswith("imputed__") or c == "__row_id")]
         priority = [c for c in NAME_COLUMNS if c in all_cols] + kpi_cols
@@ -837,7 +847,7 @@ def api_export_csv():
                 columns.append(c)
                 seen.add(c)
     else:
-        columns = NAME_COLUMNS + kpi_cols
+        columns = simple_name_cols + kpi_cols
         columns = [c for c in columns if c in df_filtered.columns and not c.startswith("imputed__") and c != "__row_id"]
 
     si = io.StringIO()
@@ -1145,6 +1155,16 @@ def admin_kpi_overview():
     return render_template("admin_kpi_overview.html",
         users_kpi=users_kpi,
         global_modes=global_modes)
+
+
+# ---------------------------------------------------------------------------
+# ヘルスチェック（認証不要）
+# ---------------------------------------------------------------------------
+
+@app.route("/health")
+def health_check():
+    """ヘルスチェック用エンドポイント。外部監視やcronから使用。"""
+    return jsonify({"status": "ok"}), 200
 
 
 # ---------------------------------------------------------------------------
