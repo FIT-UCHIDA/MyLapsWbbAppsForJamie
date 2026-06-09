@@ -703,7 +703,7 @@ def kpi_page():
 
     # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
     simple_name_cols = list(NAME_COLUMNS)
-    if "SB1" in df_filtered.columns:
+    if "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
         simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
 
     if show_all_cols:
@@ -833,7 +833,7 @@ def api_export_csv():
 
     # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
     simple_name_cols = list(NAME_COLUMNS)
-    if "SB1" in df_filtered.columns:
+    if "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
         simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
 
     if show_all_cols:
