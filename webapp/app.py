@@ -26,6 +26,7 @@ from utils import (
     _load_json, _save_json, _load_kpi_intervals,
     ensure_interval_columns, display_kpi_columns, filter_by_main_kpi,
     _propagate_imputed_flags_to_kpi,
+    legacy_v1_pipeline, compare_pipelines,
     SETTINGS_PATH, KPI_INTERVALS_PATH, TRACK_ORDER, NAME_COLUMNS,
 )
 
@@ -495,16 +496,20 @@ def api_players():
     except Exception:
         pass
 
-    start_utc = jst_str_to_utc_sql(start_jst)
-    end_utc   = jst_str_to_utc_sql(end_jst)
+    try:
+        start_utc = jst_str_to_utc_sql(start_jst)
+        end_utc   = jst_str_to_utc_sql(end_jst)
+    except Exception as e:
+        return jsonify({"error": f"日付フォーマットエラー: {str(e)}"}), 400
 
     query = f"""
     SELECT DISTINCT u.first_name, u.last_name, u.id
     FROM passing p
     JOIN transponder_user tu ON p.transponder_id = tu.transponder_id
-    JOIN user u ON tu.user_id = u.id
+    JOIN `user` u ON tu.user_id = u.id
     WHERE p.timestamp BETWEEN '{start_utc}' AND '{end_utc}'
-    AND p.timestamp BETWEEN tu.since AND tu.until
+    AND tu.since <= p.timestamp
+    AND (tu.until IS NULL OR tu.until >= p.timestamp)
     ORDER BY u.last_name, u.first_name;
     """
 
@@ -554,7 +559,7 @@ def _build_kpi_query(start_jst, end_jst, user_ids):
     ) tu
     ON tu.transponder_id = p.transponder_id
     AND tu.since <= p.timestamp
-    AND (tu.until IS NULL OR tu.until > p.timestamp)
+    AND (tu.until IS NULL OR tu.until >= p.timestamp)
     LEFT JOIN `user` u
     ON u.id = tu.user_id
     WHERE p.timestamp >= '{start_utc}'
@@ -565,8 +570,22 @@ def _build_kpi_query(start_jst, end_jst, user_ids):
             OR p.transponder_id = ''
         )
     ORDER BY p.timestamp
-    LIMIT 10000;
+    LIMIT 50000;
     """
+
+
+def _sort_key(val):
+    """ソート用キーを生成。空白は常に最下部になるよう ZZZ を返す。"""
+    if pd.isna(val):
+        return "ZZZ"
+    if isinstance(val, (pd.Timestamp, datetime)):
+        return val.strftime("%Y-%m-%d %H:%M:%S.%f")
+    if isinstance(val, float):
+        if math.isnan(val):
+            return "ZZZ"
+        # 数値は0埋め20桁文字列にして文字列ソートでも正しく並ぶようにする
+        return f"{val:020.6f}"
+    return str(val)
 
 
 def _format_timestamp(val):
@@ -655,8 +674,8 @@ def kpi_page():
             max_rows = 5
 
     # DB問い合わせ + KPI計算
-    query = _build_kpi_query(start_jst, end_jst, user_ids)
     try:
+        query = _build_kpi_query(start_jst, end_jst, user_ids)
         df_all, _users = fetch_df_from_db(query, progress=lambda m: print(f"[KPI] {m}"))
     except Exception as e:
         flash(f"データ取得エラー: {str(e)}", "error")
@@ -681,18 +700,21 @@ def kpi_page():
     config_for_filter.setdefault("settings", {})["maxRows"] = max_rows
 
     if show_all_data:
-        # mainKPIソートは無効だが、選手ごとの行数制限は適用
-        player_id_cols = []
-        if "user_id" in df_all.columns:
-            player_id_cols = ["user_id"]
-        elif "first_name" in df_all.columns and "last_name" in df_all.columns:
-            player_id_cols = ["first_name", "last_name"]
+        # mainKPIソートは無効だが、max_rows > 0 なら選手ごとの行数制限を適用
+        if max_rows > 0:
+            player_id_cols = []
+            if "user_id" in df_all.columns:
+                player_id_cols = ["user_id"]
+            elif "first_name" in df_all.columns and "last_name" in df_all.columns:
+                player_id_cols = ["first_name", "last_name"]
 
-        if player_id_cols:
-            parts = []
-            for _, group in df_all.groupby(player_id_cols):
-                parts.append(group.head(max_rows))
-            df_filtered = pd.concat(parts, ignore_index=True) if parts else df_all.copy()
+            if player_id_cols:
+                parts = []
+                for _, group in df_all.groupby(player_id_cols):
+                    parts.append(group.head(max_rows))
+                df_filtered = pd.concat(parts, ignore_index=True) if parts else df_all.copy()
+            else:
+                df_filtered = df_all.copy()
         else:
             df_filtered = df_all.copy()
     else:
@@ -755,6 +777,7 @@ def kpi_page():
                 "value": _format_value(val),
                 "imputed": is_imputed,
                 "raw": val if not pd.isna(val) else None,
+                "sort_key": _sort_key(val),
             })
         rows.append(row_data)
 
@@ -798,8 +821,8 @@ def api_export_csv():
     except ValueError:
         max_rows = 5
 
-    query = _build_kpi_query(start_jst, end_jst, user_ids)
     try:
+        query = _build_kpi_query(start_jst, end_jst, user_ids)
         df_all, _ = fetch_df_from_db(query)
     except Exception as e:
         return f"データ取得エラー: {e}", 500
@@ -813,17 +836,20 @@ def api_export_csv():
     config_for_filter.setdefault("settings", {})["maxRows"] = max_rows
 
     if show_all_data:
-        player_id_cols = []
-        if "user_id" in df_all.columns:
-            player_id_cols = ["user_id"]
-        elif "first_name" in df_all.columns and "last_name" in df_all.columns:
-            player_id_cols = ["first_name", "last_name"]
+        if max_rows > 0:
+            player_id_cols = []
+            if "user_id" in df_all.columns:
+                player_id_cols = ["user_id"]
+            elif "first_name" in df_all.columns and "last_name" in df_all.columns:
+                player_id_cols = ["first_name", "last_name"]
 
-        if player_id_cols:
-            parts = []
-            for _, group in df_all.groupby(player_id_cols):
-                parts.append(group.head(max_rows))
-            df_filtered = pd.concat(parts, ignore_index=True) if parts else df_all
+            if player_id_cols:
+                parts = []
+                for _, group in df_all.groupby(player_id_cols):
+                    parts.append(group.head(max_rows))
+                df_filtered = pd.concat(parts, ignore_index=True) if parts else df_all
+            else:
+                df_filtered = df_all
         else:
             df_filtered = df_all
     else:
@@ -882,8 +908,11 @@ def api_kpis():
     if not start_jst or not end_jst:
         return jsonify({"error": "start, end パラメータが必要です"}), 400
 
-    start_utc = jst_str_to_utc_sql(start_jst)
-    end_utc   = jst_str_to_utc_sql(end_jst)
+    try:
+        start_utc = jst_str_to_utc_sql(start_jst)
+        end_utc   = jst_str_to_utc_sql(end_jst)
+    except Exception as e:
+        return jsonify({"error": f"日付フォーマットエラー: {str(e)}"}), 400
 
     query = f"""
     SELECT
@@ -898,7 +927,7 @@ def api_kpis():
     LEFT JOIN transponder_user tu
         ON tu.transponder_id = p.transponder_id
         AND tu.since <= p.timestamp
-        AND (tu.until IS NULL OR tu.until > p.timestamp)
+        AND (tu.until IS NULL OR tu.until >= p.timestamp)
     LEFT JOIN `user` u
         ON u.id = tu.user_id
     WHERE p.timestamp >= '{start_utc}'
@@ -1155,6 +1184,64 @@ def admin_kpi_overview():
     return render_template("admin_kpi_overview.html",
         users_kpi=users_kpi,
         global_modes=global_modes)
+
+
+# ---------------------------------------------------------------------------
+# Legacy-v1 比較チェック（admin限定）
+# ---------------------------------------------------------------------------
+
+@app.route("/admin/check")
+@admin_required
+def admin_check():
+    """webapp と legacy-v1 のパイプライン結果を比較し JSON で返す。"""
+    start_jst = request.args.get("start", "")
+    end_jst = request.args.get("end", "")
+    ids_param = request.args.get("ids", "")
+
+    if not start_jst or not end_jst or not ids_param:
+        return jsonify({"error": "start, end, ids パラメータが必要です"}), 400
+
+    try:
+        user_ids = [int(x) for x in ids_param.split(",") if x.strip()]
+    except ValueError:
+        return jsonify({"error": "ids は数値のカンマ区切りで指定してください"}), 400
+
+    if not user_ids:
+        return jsonify({"error": "ids が空です"}), 400
+
+    # 同じクエリで生データを取得
+    try:
+        query = _build_kpi_query(start_jst, end_jst, user_ids)
+        raw_df = get_df_from_db(query)
+    except Exception as e:
+        return jsonify({"error": f"DB接続エラー: {str(e)}"}), 500
+
+    if raw_df.empty:
+        return jsonify({
+            "params": {"start": start_jst, "end": end_jst, "ids": user_ids},
+            "summary": {"webapp_rows": 0, "legacy_rows": 0,
+                        "matched": 0, "mismatched": 0,
+                        "webapp_only": 0, "legacy_only": 0},
+            "differences": [],
+        })
+
+    # webapp パイプライン
+    webapp_df, _ = fetch_df_from_db(query, progress=lambda m: None)
+
+    # legacy-v1 パイプライン
+    legacy_df = legacy_v1_pipeline(raw_df)
+
+    # 比較
+    params = {"start": start_jst, "end": end_jst, "ids": user_ids}
+    result = compare_pipelines(webapp_df, legacy_df, params=params)
+
+    # format=json の場合は JSON を返す（ダウンロード用）
+    fmt = request.args.get("format", "html")
+    if fmt == "json":
+        return jsonify(result)
+
+    # デフォルトは HTML 確認報告書
+    return render_template("check_report.html", result=result)
 
 
 # ---------------------------------------------------------------------------

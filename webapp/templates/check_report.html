@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Verification Report — Lap Time Analyzer{% endblock %}
+
+{% block head %}
+<style>
+    .report-header { border-bottom: 3px solid #333; padding-bottom: 12px; margin-bottom: 20px; }
+    .report-header h2 { font-size: 1.4rem; }
+    .stamp { display: inline-block; border: 3px solid; padding: 6px 18px; border-radius: 8px;
+             font-weight: bold; font-size: 1.3rem; transform: rotate(-5deg); }
+    .stamp-pass { border-color: #198754; color: #198754; }
+    .stamp-fail { border-color: #dc3545; color: #dc3545; }
+    .meta-table td { padding: 2px 12px 2px 0; }
+    .meta-table td:first-child { font-weight: 600; white-space: nowrap; }
+    .diff-table th { font-size: 0.85rem; }
+    .diff-table td { font-size: 0.85rem; font-family: monospace; }
+    .diff-highlight { background-color: #fff3cd; }
+    @media print {
+        .no-print { display: none !important; }
+        .container { max-width: 100%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container my-4">
+
+    <!-- ヘッダー -->
+    <div class="report-header d-flex justify-content-between align-items-start">
+        <div>
+            <h2>Pipeline Verification Report</h2>
+            <p class="text-muted mb-0">Webapp vs Legacy-v1 Comparison</p>
+        </div>
+        <div class="text-end">
+            {% if result.summary.mismatched == 0 and result.summary.webapp_only == 0 and result.summary.legacy_only == 0 %}
+            <span class="stamp stamp-pass">PASS</span>
+            {% else %}
+            <span class="stamp stamp-fail">DIFF</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- メタ情報 -->
+    <div class="card mb-3">
+        <div class="card-body py-2">
+            <table class="meta-table mb-0">
+                <tr><td>Report Date:</td><td>{{ result.timestamp }}</td></tr>
+                <tr><td>Query Period:</td><td>{{ result.params.start }} &mdash; {{ result.params.end }} (JST)</td></tr>
+                <tr><td>User IDs:</td><td>{{ result.params.ids | join(', ') }}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- サマリー -->
+    <div class="card mb-3">
+        <div class="card-header fw-bold">Summary</div>
+        <div class="card-body p-0">
+            <table class="table table-sm table-bordered mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Metric</th>
+                        <th class="text-end">Webapp</th>
+                        <th class="text-end">Legacy-v1</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Total Rows (laps)</td>
+                        <td class="text-end">{{ result.summary.webapp_rows }}</td>
+                        <td class="text-end">{{ result.summary.legacy_rows }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <table class="table table-sm table-bordered mb-0 mt-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Result</th>
+                        <th class="text-end">Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="table-success">
+                        <td>Matched</td>
+                        <td class="text-end">{{ result.summary.matched }}</td>
+                    </tr>
+                    {% if result.summary.mismatched > 0 %}
+                    <tr class="table-warning">
+                        <td>Value Mismatch</td>
+                        <td class="text-end">{{ result.summary.mismatched }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if result.summary.webapp_only > 0 %}
+                    <tr class="table-info">
+                        <td>Webapp Only</td>
+                        <td class="text-end">{{ result.summary.webapp_only }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if result.summary.legacy_only > 0 %}
+                    <tr class="table-danger">
+                        <td>Legacy Only</td>
+                        <td class="text-end">{{ result.summary.legacy_only }}</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 差分詳細 -->
+    {% if result.differences %}
+    <div class="card mb-3">
+        <div class="card-header fw-bold">Differences ({{ result.differences | length }})</div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered diff-table mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Type</th>
+                            <th>User</th>
+                            <th>Date</th>
+                            <th>0m_start</th>
+                            <th>Column</th>
+                            <th>Webapp</th>
+                            <th>Legacy</th>
+                            <th>Diff (sec)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for diff in result.differences %}
+                            {% set outer_index = loop.index %}
+                            {% if diff.type == 'value_mismatch' %}
+                                {% for col_diff in diff.columns %}
+                                <tr class="diff-highlight">
+                                    <td>{{ outer_index }}</td>
+                                    <td><span class="badge bg-warning text-dark">MISMATCH</span></td>
+                                    <td>{{ diff.user }}</td>
+                                    <td>{{ diff.date }}</td>
+                                    <td>{{ diff['0m_start'] }}</td>
+                                    <td><strong>{{ col_diff.column }}</strong></td>
+                                    <td>{{ col_diff.webapp or '(null)' }}</td>
+                                    <td>{{ col_diff.legacy or '(null)' }}</td>
+                                    <td>{{ col_diff.diff_sec or '' }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>
+                                    {% if diff.type == 'webapp_only' %}
+                                    <span class="badge bg-info">WEBAPP ONLY</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">LEGACY ONLY</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ diff.user }}</td>
+                                <td>{{ diff.date }}</td>
+                                <td>{{ diff['0m_start'] }}</td>
+                                <td colspan="4">—</td>
+                            </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-success">
+        All rows matched. The webapp pipeline produces identical results to legacy-v1.
+    </div>
+    {% endif %}
+
+    <!-- 操作ボタン -->
+    <div class="no-print d-flex gap-2 mb-4">
+        <button class="btn btn-outline-secondary btn-sm" onclick="window.print()">Print Report</button>
+        <a class="btn btn-outline-primary btn-sm"
+           href="{{ url_for('admin_check', start=result.params.start, end=result.params.end, ids=result.params.ids|join(','), format='json') }}">
+            Download JSON
+        </a>
+        <button class="btn btn-outline-dark btn-sm" onclick="window.close()">Close</button>
+    </div>
+
+</div>
+{% endblock %}

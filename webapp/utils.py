@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 import unicodedata
@@ -142,7 +142,28 @@ def get_df_from_db(query):
 def jst_str_to_utc_sql(ts_jst_str: str) -> str:
     if not ts_jst_str:
         return ts_jst_str
-    dt = datetime.strptime(ts_jst_str, "%Y-%m-%d %H:%M:%S")
+    s = ts_jst_str.strip()
+    # 複数フォーマットに対応
+    formats = [
+        "%Y-%m-%d %H:%M:%S",       # 標準: 2026-06-10 15:00:00
+        "%Y-%m-%dT%H:%M:%S",       # ISO:  2026-06-10T15:00:00
+        "%Y-%m-%dT%H:%M",          # ISO短: 2026-06-10T15:00
+        "%Y-%m-%d %H:%M",          # 短:   2026-06-10 15:00
+        "%m/%d/%Y, %I:%M:%S %p",   # US:   06/10/2026, 03:00:00 PM
+        "%m/%d/%Y %I:%M:%S %p",    # US2:  06/10/2026 03:00:00 PM
+        "%m/%d/%Y %H:%M:%S",       # US24: 06/10/2026 15:00:00
+        "%m/%d/%Y",                # US日付のみ: 06/10/2026
+        "%Y-%m-%d",                # 日付のみ: 2026-06-10
+    ]
+    dt = None
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(s, fmt)
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        raise ValueError(f"日付フォーマットを認識できません: '{ts_jst_str}'")
     jst = dt.replace(tzinfo=ZoneInfo("Asia/Tokyo"))
     utc = jst.astimezone(ZoneInfo("UTC"))
     return utc.strftime("%Y-%m-%d %H:%M:%S")
@@ -217,15 +238,25 @@ def impute_times_by_distance(df_laps: pd.DataFrame) -> pd.DataFrame:
 # ラップ分割
 # ---------------------------------------------------------------------------
 
-def split_laps(df):
-    def _canon_pos(x: str) -> str:
+def split_laps(df, all_data=None):
+    """
+    ラップ分割（0m基準 — legacy-v1互換）
+    - 0mを検出したら新しいラップを開始
+    - SB1は all_data から user_id が空のレコードを 0m の5秒前以内で検索
+    - FPは df から 0m の5秒前以内で検索
+    """
+    expected_order = [
+        "FP", "0m", "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
+    ]
+
+    def _canon_pos(x):
         if x is None:
             return ""
         s = unicodedata.normalize("NFKC", str(x)).strip()
         u = s.upper()
-        if u in {"FP", "FP"}:
+        if u in {"FP", "\uff26\uff30"}:
             return "FP"
-        if u in {"0M", "OM", "0M"}:
+        if u in {"0M", "OM", "0\uff2d"}:
             return "0m"
         if re.fullmatch(r"SB[\s\-]*1", u) or u == "SB1":
             return "SB1"
@@ -236,96 +267,126 @@ def split_laps(df):
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
     df["position"] = df["position"].map(_canon_pos)
 
-    anchors   = {"FP", "0m"}
-    inner_pts = ["60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m"]
+    # SB1候補の準備（all_data から user_id が空の SB1 レコード）
+    sb1_candidates = None
+    if all_data is not None:
+        adc = all_data.copy()
+        adc["timestamp"] = pd.to_datetime(adc["timestamp"], errors="coerce")
+        adc["position"] = adc["position"].map(_canon_pos)
+        if "user_id" in adc.columns:
+            sb1_candidates = adc[
+                (adc["position"] == "SB1")
+                & (adc["user_id"].isna()
+                   | (adc["user_id"].astype(str).str.strip() == ""))
+            ].copy()
 
-    tmp_cols = ["FP_first", "SB1", "0m_start"] + inner_pts
     rows = []
-    cur = {k: None for k in tmp_cols}
-    anchor = None
+    current_lap = {}
+    lap_id = 0
 
-    def flush():
-        nonlocal cur, rows, anchor
-        if any(v is not None for v in cur.values()):
-            rows.append(cur)
-        cur = {k: None for k in tmp_cols}
-        anchor = None
+    def complete_lap(lap_dict, lid):
+        """ラップを完成させて rows に追加"""
+        sb1_value = None
+        fp_value = None
 
-    for _, r in df.iterrows():
-        pos = r["position"]
-        ts  = r["timestamp"]
+        if "0m" in lap_dict and lap_dict["0m"] is not None:
+            zero_m_time = pd.to_datetime(lap_dict["0m"])
+            tw_start = zero_m_time - timedelta(seconds=5)
+            tw_end = zero_m_time
 
-        if (pos not in anchors) and (pos not in inner_pts) and (pos != "SB1"):
-            continue
+            # SB1 検索
+            if sb1_candidates is not None and len(sb1_candidates) > 0:
+                ts_col = pd.to_datetime(sb1_candidates["timestamp"])
+                sb1_in = sb1_candidates[
+                    (ts_col >= tw_start) & (ts_col <= tw_end)
+                ]
+                if len(sb1_in) > 0:
+                    sb1_in = sb1_in.sort_values("timestamp", ascending=False)
+                    sb1_value = sb1_in.iloc[0]["timestamp"]
 
-        if pos in anchors:
-            if anchor is None:
-                anchor = pos
-                if pos == "FP":
-                    if cur["FP_first"] is None:
-                        cur["FP_first"] = ts
-                else:
-                    if cur["0m_start"] is None:
-                        cur["0m_start"] = ts
-            else:
-                if pos == anchor:
-                    flush()
-                    anchor = pos
-                    if pos == "FP":
-                        cur["FP_first"] = ts
-                    else:
-                        cur["0m_start"] = ts
-                else:
-                    if pos == "FP" and cur["FP_first"] is None:
-                        cur["FP_first"] = ts
-                    if pos == "0m" and cur["0m_start"] is None:
-                        cur["0m_start"] = ts
-            continue
+            # FP 検索
+            fp_cands = df[df["position"] == "FP"].copy()
+            if len(fp_cands) > 0:
+                ts_col = pd.to_datetime(fp_cands["timestamp"])
+                fp_in = fp_cands[
+                    (ts_col >= tw_start) & (ts_col <= tw_end)
+                ]
+                if len(fp_in) > 0:
+                    fp_in = fp_in.sort_values("timestamp", ascending=False)
+                    fp_value = fp_in.iloc[0]["timestamp"]
 
-        if pos == "SB1":
-            fp_seen     = (cur.get("FP_first") is not None) and (not pd.isna(cur.get("FP_first")))
-            z0_not_seen = (cur.get("0m_start") is None) or pd.isna(cur.get("0m_start"))
-            sb1_not_set = (cur.get("SB1") is None) or pd.isna(cur.get("SB1"))
-            if (anchor is not None) and fp_seen and z0_not_seen and sb1_not_set:
-                cur["SB1"] = ts
-            continue
+        result = {}
+        for pos, ts in lap_dict.items():
+            if pos != "FP":
+                result[pos] = ts
+        result["SB1"] = sb1_value
+        result["FP"] = fp_value
+        rows.append(result)
 
-        if anchor is not None and pos in inner_pts and cur[pos] is None:
-            cur[pos] = ts
+    # --- 0m 検出でラップ分割 ---
+    for _, row in df.iterrows():
+        pos = row["position"]
+        ts = row["timestamp"]
 
-    flush()
+        if pos == "0m":
+            if current_lap:
+                lap_id += 1
+                complete_lap(current_lap, lap_id)
+                current_lap = {}
+            current_lap[pos] = ts
+        else:
+            if current_lap:
+                current_lap[pos] = ts
 
+    # 最後のラップ
+    if current_lap:
+        lap_id += 1
+        complete_lap(current_lap, lap_id)
+
+    # --- 結果構築 ---
+    empty_cols = [
+        "Date", "FP_start", "SB1", "0m_start",
+        "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
+        "FP_2nd", "0m_2nd",
+    ]
     if not rows:
-        return pd.DataFrame(columns=["FP_start", "SB1", "0m_start", *inner_pts, "FP_2nd", "0m_2nd"])
+        return pd.DataFrame(columns=empty_cols)
 
-    out_tmp = pd.DataFrame(rows, columns=tmp_cols)
+    # 全列を収集して順序付け（期待列は常に含める）
+    all_columns = set()
+    for d in rows:
+        all_columns.update(d.keys())
 
-    def compute_fp_start(row):
-        fp = row["FP_first"]
-        z0 = row["0m_start"]
-        if pd.isna(fp):
-            return pd.NaT
-        if pd.isna(z0):
-            return fp
-        return fp if fp <= z0 else pd.NaT
+    ordered = ["SB1", "FP"]
+    for col in expected_order:
+        if col != "FP":
+            ordered.append(col)
+    for col in sorted(all_columns - set(ordered)):
+        ordered.append(col)
 
-    out = pd.DataFrame()
-    out["FP_start"] = out_tmp.apply(compute_fp_start, axis=1)
-    out["SB1"]      = out_tmp["SB1"]
-    out["0m_start"] = out_tmp["0m_start"]
-    for c in inner_pts:
-        out[c] = out_tmp[c]
+    result_df = pd.DataFrame(rows, columns=ordered)
 
-    out["FP_2nd"] = out_tmp["FP_first"].shift(-1)
-    out["0m_2nd"] = out["0m_start"].shift(-1)
+    # Date 列
+    def get_date(r):
+        for c in ["SB1", "FP"] + [c for c in expected_order if c != "FP"]:
+            if c in r.index and pd.notna(r.get(c)):
+                return pd.to_datetime(r[c]).date()
+        return None
 
-    cols_for_date = ["FP_first", "0m_start"] + inner_pts
-    first_ts = out_tmp[cols_for_date].apply(
-        lambda r: r.dropna().min() if r.notna().any() else pd.NaT, axis=1
+    result_df.insert(0, "Date", result_df.apply(get_date, axis=1))
+
+    # Web app 互換の列名にリネーム
+    result_df = result_df.rename(columns={"FP": "FP_start", "0m": "0m_start"})
+
+    # FP_2nd / 0m_2nd（次ラップの値）
+    result_df["FP_2nd"] = (
+        result_df["FP_start"].shift(-1) if "FP_start" in result_df.columns else pd.NaT
     )
-    out.insert(0, "Date", pd.to_datetime(first_ts).dt.date)
+    result_df["0m_2nd"] = (
+        result_df["0m_start"].shift(-1) if "0m_start" in result_df.columns else pd.NaT
+    )
 
-    return out
+    return result_df
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +511,9 @@ def fetch_df_from_db(
     query: str,
     progress: Optional[Callable[[str], None]] = None,
 ):
+    """
+    DB → 前処理 → split → 補間 → 結合（legacy-v1 互換パイプライン）
+    """
     def _p(msg: str):
         if progress:
             try:
@@ -485,70 +549,18 @@ def fetch_df_from_db(
 
         group = group.sort_values(by=["timestamp"]).reset_index(drop=True)
 
-        sb1_all = df[df["position"] == "SB1"].copy()
-        if not group.empty:
-            tmin, tmax = group["timestamp"].min(), group["timestamp"].max()
-            sb1_all = sb1_all[
-                (sb1_all["timestamp"] >= tmin) & (sb1_all["timestamp"] <= tmax)
-            ]
+        # legacy-v1 互換: 全データを渡して SB1 検索用に使用
+        temp = split_laps(group, all_data=df)
 
-        is_fp_user = group["position"].eq("FP")
-        is_0m_user = group["position"].eq("0m")
-        fp_cum_user = is_fp_user.cumsum()
-
-        interval_id_user = fp_cum_user
-        first0_ts_by_int = (
-            group.assign(_is0m=is_0m_user)
-            .groupby(interval_id_user, dropna=False)
-            .apply(
-                lambda s: s.loc[s["_is0m"], "timestamp"].iloc[0]
-                if s["_is0m"].any()
-                else pd.NaT
-            )
-        )
-
-        work = pd.concat([group, sb1_all], ignore_index=True).sort_values(
-            "timestamp"
-        ).reset_index(drop=True)
-
-        is_fp_in_work = (work["position"].eq("FP")) & (work.get("user_id") == uid)
-        is_0m_in_work = (work["position"].eq("0m")) & (work.get("user_id") == uid)
-        fp_cum_work = is_fp_in_work.cumsum()
-        z0_cum_work = is_0m_in_work.cumsum()
-        between_work = fp_cum_work.gt(z0_cum_work)
-        interval_id_work = fp_cum_work
-        work["_first0"] = interval_id_work.map(first0_ts_by_int)
-
-        sb1_between = (
-            work["position"].eq("SB1")
-            & between_work
-            & work["timestamp"].lt(work["_first0"])
-        )
-        sb1_cnt = sb1_between.groupby(interval_id_work, dropna=False).transform("sum")
-        sb1_keep = sb1_between & sb1_cnt.eq(1)
-
-        keep_mask = (work.get("user_id") == uid) | sb1_keep
-        group_plus_sb1 = (
-            work[keep_mask].copy().sort_values("timestamp").reset_index(drop=True)
-        )
-
-        temp = split_laps(group_plus_sb1)
-
-        _p(f"ユーザー {uid if uid is not None else '-'}: 補間中...")
-        temp = impute_times_by_distance(temp)
         temp = temp.reset_index(drop=True)
 
-        temp["0m_2nd"] = temp["0m_start"].shift(-1)
-        temp["FP_2nd"] = (
-            temp["FP_first"].shift(-1)
-            if "FP_first" in temp.columns
-            else temp["FP_start"].shift(-1)
-        )
-
+        # 氏名・user_id 付与
         if "first_name" in group.columns:
             temp["first_name"] = group["first_name"].iloc[0]
         if "last_name" in group.columns:
             temp["last_name"] = group["last_name"].iloc[0]
+        if "user_id" in group.columns:
+            temp["user_id"] = uid
 
         all_dfs.append(temp.copy())
 
@@ -687,16 +699,318 @@ def filter_by_main_kpi(df: pd.DataFrame, time_mode: str, interval_config: dict) 
     max_rows = settings.get("maxRows", 5)
 
     filtered_rows = []
-    for _, group in df.groupby(player_id_cols):
+    for _, group in df.groupby(player_id_cols, dropna=False):
         group_sorted = group.sort_values(by=main_kpi, ascending=True, na_position='last')
         valid_group = group_sorted[group_sorted[main_kpi].notna()]
         if len(valid_group) > 0:
-            filtered_rows.append(valid_group.head(max_rows))
+            filtered_rows.append(valid_group.head(max_rows) if max_rows > 0 else valid_group)
         else:
-            top_rows = group_sorted.head(max_rows)
+            if max_rows > 0:
+                top_rows = group_sorted.head(max_rows)
+            else:
+                top_rows = group_sorted
             if len(top_rows) > 0:
                 filtered_rows.append(top_rows)
 
     if filtered_rows:
         return pd.concat(filtered_rows, ignore_index=True)
     return df
+
+
+# ===========================================================================
+# Legacy-v1 参照実装（比較チェック用）
+# ===========================================================================
+
+def _legacy_v1_split_laps(df, all_data=None):
+    """
+    legacy-v1 オリジナルの split_laps（GitHub legacy-v1 branch から移植）。
+    比較チェック専用 — 本番処理には使わない。
+    """
+    expected_order = [
+        "FP", "0m", "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
+    ]
+
+    def _canon(x):
+        if x is None:
+            return ""
+        s = unicodedata.normalize("NFKC", str(x)).strip()
+        u = s.upper()
+        if u in {"FP", "\uff26\uff30"}:
+            return "FP"
+        if u in {"0M", "OM", "0\uff2d"}:
+            return "0m"
+        if re.fullmatch(r"SB[\s\-]*1", u) or u == "SB1":
+            return "SB1"
+        return s
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
+    df["position"] = df["position"].map(_canon)
+
+    sb1_candidates = None
+    if all_data is not None:
+        adc = all_data.copy()
+        adc["timestamp"] = pd.to_datetime(adc["timestamp"], errors="coerce")
+        adc["position"] = adc["position"].map(_canon)
+        if "user_id" in adc.columns:
+            sb1_candidates = adc[
+                (adc["position"] == "SB1")
+                & (adc["user_id"].isna()
+                   | (adc["user_id"].astype(str).str.strip() == ""))
+            ].copy()
+
+    rows = []
+    current_lap = {}
+    lap_id = 0
+
+    def complete_lap(lap_dict, lid):
+        sb1_value = None
+        fp_value = None
+        if "0m" in lap_dict and lap_dict["0m"] is not None:
+            zero_m = pd.to_datetime(lap_dict["0m"])
+            tw_s = zero_m - timedelta(seconds=5)
+            tw_e = zero_m
+            if sb1_candidates is not None and len(sb1_candidates) > 0:
+                ts = pd.to_datetime(sb1_candidates["timestamp"])
+                hit = sb1_candidates[(ts >= tw_s) & (ts <= tw_e)]
+                if len(hit) > 0:
+                    sb1_value = hit.sort_values("timestamp", ascending=False).iloc[0]["timestamp"]
+            fp_c = df[df["position"] == "FP"].copy()
+            if len(fp_c) > 0:
+                ts = pd.to_datetime(fp_c["timestamp"])
+                hit = fp_c[(ts >= tw_s) & (ts <= tw_e)]
+                if len(hit) > 0:
+                    fp_value = hit.sort_values("timestamp", ascending=False).iloc[0]["timestamp"]
+        result = {}
+        for pos, ts in lap_dict.items():
+            if pos != "FP":
+                result[pos] = ts
+        result["SB1"] = sb1_value
+        result["FP"] = fp_value
+        rows.append(result)
+
+    for _, row in df.iterrows():
+        pos, ts = row["position"], row["timestamp"]
+        if pos == "0m":
+            if current_lap:
+                lap_id += 1
+                complete_lap(current_lap, lap_id)
+                current_lap = {}
+            current_lap[pos] = ts
+        else:
+            if current_lap:
+                current_lap[pos] = ts
+
+    if current_lap:
+        lap_id += 1
+        complete_lap(current_lap, lap_id)
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "Date", "FP_start", "SB1", "0m_start",
+            "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
+        ])
+
+    all_cols = set()
+    for d in rows:
+        all_cols.update(d.keys())
+    ordered = ["SB1", "FP"]
+    for c in expected_order:
+        if c in all_cols and c != "FP":
+            ordered.append(c)
+    for c in sorted(all_cols - set(ordered)):
+        ordered.append(c)
+
+    result_df = pd.DataFrame(rows, columns=ordered)
+
+    def get_date(r):
+        for c in ["SB1", "FP"] + [c for c in expected_order if c != "FP"]:
+            if c in r.index and pd.notna(r.get(c)):
+                return pd.to_datetime(r[c]).date()
+        return None
+
+    result_df.insert(0, "Date", result_df.apply(get_date, axis=1))
+    result_df = result_df.rename(columns={"FP": "FP_start", "0m": "0m_start"})
+    return result_df
+
+
+def legacy_v1_pipeline(df_raw):
+    """
+    legacy-v1 互換パイプライン（補間なし）。
+    df_raw は get_df_from_db() の生データ（UTC タイムスタンプ）。
+    """
+    df = df_raw.copy()
+    if df.empty:
+        return df
+
+    if "timestamp" in df.columns:
+        df["timestamp"] = to_jst_naive(df["timestamp"])
+    if "decoder_id" in df.columns:
+        df["position"] = df["decoder_id"].map(translate_dict).fillna("Unknown")
+    else:
+        df["position"] = "Unknown"
+
+    all_dfs = []
+    group_key = "user_id" if "user_id" in df.columns else None
+    groups = df.groupby(group_key) if group_key else [(None, df)]
+
+    for uid, group in groups:
+        group = group.sort_values("timestamp").reset_index(drop=True)
+        temp = _legacy_v1_split_laps(group, all_data=df)
+        if "first_name" in group.columns:
+            temp["first_name"] = group["first_name"].iloc[0]
+        if "last_name" in group.columns:
+            temp["last_name"] = group["last_name"].iloc[0]
+        if "user_id" in group.columns:
+            temp["user_id"] = uid
+        all_dfs.append(temp.copy())
+
+    if not all_dfs:
+        return pd.DataFrame()
+    return pd.concat(all_dfs, ignore_index=True)
+
+
+def compare_pipelines(webapp_df, legacy_df, params=None):
+    """
+    webapp パイプラインと legacy-v1 パイプラインの結果を比較。
+    JSON シリアライズ可能な dict を返す。
+    """
+    compare_cols = [
+        "FP_start", "SB1", "0m_start",
+        "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
+    ]
+
+    def _ts_str(v):
+        if pd.isna(v):
+            return None
+        if isinstance(v, (pd.Timestamp, datetime)):
+            return v.strftime("%H:%M:%S.%f")[:-3]
+        return str(v)
+
+    def _make_key(row):
+        u = ""
+        if "last_name" in row.index and pd.notna(row.get("last_name")):
+            u = f"{row['last_name']} {row.get('first_name', '')}"
+        z = _ts_str(row.get("0m_start"))
+        return (u.strip(), str(row.get("Date", "")), z or "")
+
+    # キー→行 のマップを構築
+    wa_map = {}
+    for i, row in webapp_df.iterrows():
+        k = _make_key(row)
+        wa_map.setdefault(k, []).append(row)
+
+    lg_map = {}
+    for i, row in legacy_df.iterrows():
+        k = _make_key(row)
+        lg_map.setdefault(k, []).append(row)
+
+    all_keys = sorted(set(wa_map.keys()) | set(lg_map.keys()))
+
+    differences = []
+    matched = 0
+    mismatched = 0
+    webapp_only = 0
+    legacy_only = 0
+
+    for key in all_keys:
+        wa_rows = wa_map.get(key, [])
+        lg_rows = lg_map.get(key, [])
+
+        if not lg_rows:
+            webapp_only += len(wa_rows)
+            for r in wa_rows:
+                differences.append({
+                    "type": "webapp_only",
+                    "user": key[0], "date": key[1], "0m_start": key[2],
+                })
+            continue
+
+        if not wa_rows:
+            legacy_only += len(lg_rows)
+            for r in lg_rows:
+                differences.append({
+                    "type": "legacy_only",
+                    "user": key[0], "date": key[1], "0m_start": key[2],
+                })
+            continue
+
+        # 1対1で比較（同キーに複数ある場合は順序で対応）
+        for idx in range(max(len(wa_rows), len(lg_rows))):
+            if idx >= len(wa_rows):
+                legacy_only += 1
+                differences.append({
+                    "type": "legacy_only",
+                    "user": key[0], "date": key[1], "0m_start": key[2],
+                })
+                continue
+            if idx >= len(lg_rows):
+                webapp_only += 1
+                differences.append({
+                    "type": "webapp_only",
+                    "user": key[0], "date": key[1], "0m_start": key[2],
+                })
+                continue
+
+            wa_r = wa_rows[idx]
+            lg_r = lg_rows[idx]
+            row_diffs = []
+
+            for col in compare_cols:
+                wa_v = wa_r.get(col) if col in wa_r.index else None
+                lg_v = lg_r.get(col) if col in lg_r.index else None
+                wa_na = pd.isna(wa_v) if wa_v is not None else True
+                lg_na = pd.isna(lg_v) if lg_v is not None else True
+
+                if wa_na and lg_na:
+                    continue
+                if wa_na != lg_na:
+                    row_diffs.append({
+                        "column": col,
+                        "webapp": _ts_str(wa_v),
+                        "legacy": _ts_str(lg_v),
+                    })
+                    continue
+                # 両方値あり — 1秒以内なら一致とみなす
+                try:
+                    diff_sec = abs((pd.Timestamp(wa_v) - pd.Timestamp(lg_v)).total_seconds())
+                    if diff_sec > 1.0:
+                        row_diffs.append({
+                            "column": col,
+                            "webapp": _ts_str(wa_v),
+                            "legacy": _ts_str(lg_v),
+                            "diff_sec": round(diff_sec, 3),
+                        })
+                except Exception:
+                    if str(wa_v) != str(lg_v):
+                        row_diffs.append({
+                            "column": col,
+                            "webapp": _ts_str(wa_v),
+                            "legacy": _ts_str(lg_v),
+                        })
+
+            if row_diffs:
+                mismatched += 1
+                differences.append({
+                    "type": "value_mismatch",
+                    "user": key[0], "date": key[1], "0m_start": key[2],
+                    "columns": row_diffs,
+                })
+            else:
+                matched += 1
+
+    result = {
+        "params": params or {},
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "summary": {
+            "webapp_rows": len(webapp_df),
+            "legacy_rows": len(legacy_df),
+            "matched": matched,
+            "mismatched": mismatched,
+            "webapp_only": webapp_only,
+            "legacy_only": legacy_only,
+        },
+        "differences": differences,
+    }
+    return result

@@ -1,6 +1,6 @@
 {
   "settings": {
-    "maxRows": 3,
+    "maxRows": 20,
     "showAllColumns": true,
     "showAllData": false
   },

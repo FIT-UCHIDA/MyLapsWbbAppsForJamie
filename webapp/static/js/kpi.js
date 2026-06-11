@@ -310,6 +310,17 @@ function exportCSV() {
 }
 
 /**
+ * Legacy-v1 比較チェック（admin専用）
+ */
+function compareLegacy() {
+    var params = new URLSearchParams();
+    params.set('start', document.getElementById('param-start').value);
+    params.set('end', document.getElementById('param-end').value);
+    params.set('ids', document.getElementById('param-ids').value);
+    window.open('/admin/check?' + params.toString(), '_blank');
+}
+
+/**
  * 画面下部の通知バー
  */
 function showBottomBar(message, type) {

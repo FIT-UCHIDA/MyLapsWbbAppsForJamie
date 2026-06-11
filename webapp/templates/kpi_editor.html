@@ -27,6 +27,28 @@
             {% endfor %}
         </select>
     </div>
+    <div class="col-auto">
+        <button class="btn btn-sm btn-outline-secondary" onclick="showRenameModal()">Rename Mode</button>
+    </div>
+</div>
+
+<!-- リネームモーダル -->
+<div id="rename-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:10000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:8px; padding:24px; width:400px; max-width:90%;">
+        <h5 class="mb-3">Rename Mode</h5>
+        <div class="mb-2">
+            <label class="form-label mb-1">Current name:</label>
+            <input type="text" id="rename-old" class="form-control form-control-sm" readonly>
+        </div>
+        <div class="mb-3">
+            <label class="form-label mb-1">New name:</label>
+            <input type="text" id="rename-new" class="form-control form-control-sm" placeholder="Enter new name">
+        </div>
+        <div class="d-flex gap-2 justify-content-end">
+            <button class="btn btn-sm btn-outline-secondary" onclick="hideRenameModal()">Cancel</button>
+            <button class="btn btn-sm btn-warning" onclick="confirmRename()">Rename</button>
+        </div>
+    </div>
 </div>
 
 <!-- 区間定義テーブル -->
@@ -77,9 +99,14 @@
     </div>
 </div>
 
+<!-- 未保存警告 -->
+<div id="unsaved-warning" class="alert alert-warning d-none mb-2" role="alert">
+    <strong>Unsaved changes.</strong> Press "Save and Back" to apply.
+</div>
+
 <!-- 保存ボタン -->
 <div class="d-flex gap-2">
-    <button class="btn btn-success" onclick="saveConfig()">Save and Back</button>
+    <button id="btn-save" class="btn btn-success" onclick="saveConfig()">Save and Back</button>
     <button class="btn btn-outline-secondary" onclick="history.back()">Cancel</button>
 </div>
 {% endblock %}
@@ -91,6 +118,14 @@ const modesData = {{ modes_data | tojson }};
 
 function currentMode() {
     return document.getElementById('mode-select').value;
+}
+
+function markUnsaved() {
+    document.getElementById('unsaved-warning').classList.remove('d-none');
+    var btn = document.getElementById('btn-save');
+    btn.classList.remove('btn-success');
+    btn.classList.add('btn-warning');
+    btn.textContent = 'Save and Back *';
 }
 
 function refreshTable() {
@@ -132,6 +167,7 @@ function addInterval() {
 
     modesData[mode].intervals.push(entry);
     document.getElementById('add-name').value = '';
+    markUnsaved();
     refreshTable();
 }
 
@@ -139,6 +175,7 @@ function deleteInterval(idx) {
     const mode = currentMode();
     if (modesData[mode] && modesData[mode].intervals) {
         modesData[mode].intervals.splice(idx, 1);
+        markUnsaved();
         refreshTable();
     }
 }
@@ -171,6 +208,65 @@ function saveConfig() {
     })
     .catch(err => alert('Error: ' + err.message));
 }
+
+// --- Rename Mode ---
+function showRenameModal() {
+    const oldName = currentMode();
+    document.getElementById('rename-old').value = oldName;
+    document.getElementById('rename-new').value = '';
+    const modal = document.getElementById('rename-modal');
+    modal.style.display = 'flex';
+    document.getElementById('rename-new').focus();
+}
+
+function hideRenameModal() {
+    document.getElementById('rename-modal').style.display = 'none';
+}
+
+function confirmRename() {
+    const oldName = document.getElementById('rename-old').value;
+    const newName = document.getElementById('rename-new').value.trim().toLowerCase();
+
+    if (!newName) {
+        alert('Please enter a new name.');
+        return;
+    }
+    if (newName === oldName) {
+        hideRenameModal();
+        return;
+    }
+    if (modesData[newName]) {
+        alert('A mode with that name already exists.');
+        return;
+    }
+    if (!confirm('Rename "' + oldName + '" to "' + newName + '"?\nAre you sure?')) {
+        return;
+    }
+
+    // modesData のキーを入れ替え
+    modesData[newName] = modesData[oldName];
+    delete modesData[oldName];
+
+    // セレクトボックスを更新
+    const sel = document.getElementById('mode-select');
+    for (let i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === oldName) {
+            sel.options[i].value = newName;
+            sel.options[i].text = newName.charAt(0).toUpperCase() + newName.slice(1);
+            break;
+        }
+    }
+    sel.value = newName;
+
+    hideRenameModal();
+    markUnsaved();
+    refreshTable();
+}
+
+// Escキーでモーダルを閉じる
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideRenameModal();
+});
 
 // 初期表示
 document.addEventListener('DOMContentLoaded', refreshTable);
