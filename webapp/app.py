@@ -12,8 +12,10 @@ import copy
 import glob
 import shutil
 import subprocess
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from flask import (
@@ -27,6 +29,7 @@ from utils import (
     ensure_interval_columns, display_kpi_columns, filter_by_main_kpi,
     _propagate_imputed_flags_to_kpi,
     legacy_v1_pipeline, compare_pipelines,
+    get_db_max_timestamp, get_decoder_status, MAIN_DECODERS, DECODER_DISPLAY_ORDER,
     SETTINGS_PATH, KPI_INTERVALS_PATH, TRACK_ORDER, NAME_COLUMNS,
 )
 
@@ -43,6 +46,18 @@ PROJECT_DIR = os.path.dirname(APP_DIR)
 
 # 最大バックアップ保持数
 MAX_BACKUPS = 50
+
+# ---------------------------------------------------------------------------
+# デコーダステータス キャッシュ（ライブ監視用）
+# ---------------------------------------------------------------------------
+_decoder_cache_lock = threading.Lock()
+_decoder_cache = {
+    'last_max_ts':        None,   # 最後に確認したDB MAX(timestamp)
+    'first_activity_at':  None,   # 新規活動を最初に検知したときの datetime(JST)
+    'stage':              'idle', # idle | waiting | ok | error
+    'result':             None,   # 最後のフルチェック結果 dict
+    'last_full_check_at': None,   # フルチェックを実行した datetime(JST)
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1252,6 +1267,170 @@ def admin_check():
 def health_check():
     """ヘルスチェック用エンドポイント。外部監視やcronから使用。"""
     return jsonify({"status": "ok"}), 200
+
+
+# ---------------------------------------------------------------------------
+# デコーダ動作チェック
+# ---------------------------------------------------------------------------
+
+@app.route("/api/decoder_status")
+def api_decoder_status():
+    """
+    API 1: ライブ監視ステータス（2段階チェック、認証不要）
+
+    Stage 1: MAX(timestamp) で安価にDB変化を検知
+    Stage 2: wait_minutes 後にデコーダの揃い確認
+
+    Query params:
+        wait_minutes (int):          新規活動検知後の待機時間（デフォルト 5 分）
+        check_window_minutes (int):  デコーダ確認の時間窓（デフォルト 30 分）
+    """
+    JST = ZoneInfo("Asia/Tokyo")
+    now = datetime.now(JST)
+
+    wait_minutes         = max(1, int(request.args.get('wait_minutes', 5)))
+    check_window_minutes = max(5, int(request.args.get('check_window_minutes', 30)))
+
+    with _decoder_cache_lock:
+        cache = _decoder_cache
+
+        # --- Stage 1: 軽量チェック ---
+        current_max_ts = get_db_max_timestamp()
+
+        if current_max_ts is None:
+            cache['stage'] = 'idle'
+            return jsonify({
+                'stage':   'idle',
+                'status':  'idle',
+                'message': 'Database unreachable or no data.',
+                'checked_at': now.isoformat(),
+                'decoders': {}, 'missing': [], 'present': [], 'error': None,
+            })
+
+        # 新規活動の検知（waiting 中は上書きしない）
+        if current_max_ts != cache['last_max_ts']:
+            cache['last_max_ts'] = current_max_ts
+            if cache['stage'] != 'waiting':
+                cache['first_activity_at'] = now
+                cache['stage']  = 'waiting'
+                cache['result'] = None
+
+        stage = cache['stage']
+
+        # --- Stage 2a: 待機中 ---
+        if stage == 'waiting':
+            elapsed   = (now - cache['first_activity_at']).total_seconds() / 60
+            remaining = wait_minutes - elapsed
+
+            if remaining > 0:
+                return jsonify({
+                    'stage':   'waiting',
+                    'status':  'waiting',
+                    'message': f'Activity detected. Waiting {remaining:.1f} more min before decoder check.',
+                    'first_activity_at': cache['first_activity_at'].isoformat(),
+                    'wait_minutes':      wait_minutes,
+                    'remaining_minutes': round(remaining, 1),
+                    'checked_at': now.isoformat(),
+                    'decoders': {}, 'missing': [], 'present': [], 'error': None,
+                })
+
+            # 待機完了 → フルチェック実行
+            from_dt = now - timedelta(minutes=check_window_minutes)
+            full = get_decoder_status(from_dt, now)
+            full['stage']               = full['status']
+            full['checked_at']          = now.isoformat()
+            full['first_activity_at']   = cache['first_activity_at'].isoformat()
+            full['check_window_minutes'] = check_window_minutes
+            full['message'] = (
+                'All decoders OK.'
+                if not full['missing']
+                else f"Missing: {', '.join(full['missing'])}"
+            )
+            cache['stage']             = full['status']
+            cache['last_full_check_at'] = now
+            cache['result']            = full
+            return jsonify(full)
+
+        # --- Stage 2b: ok/error キャッシュ返却 ---
+        if cache['result']:
+            resp = dict(cache['result'])
+            resp['from_cache'] = True
+            if cache['last_full_check_at']:
+                resp['cache_age_minutes'] = round(
+                    (now - cache['last_full_check_at']).total_seconds() / 60, 1
+                )
+            return jsonify(resp)
+
+        # キャッシュなし（初期 idle）
+        return jsonify({
+            'stage':   'idle',
+            'status':  'idle',
+            'message': 'Waiting for activity...',
+            'checked_at': now.isoformat(),
+            'decoders': {}, 'missing': [], 'present': [], 'error': None,
+        })
+
+
+@app.route("/api/decoder_check")
+def api_decoder_check():
+    """
+    API 2: 指定時間区間のデコーダ揃いチェック（認証不要）
+
+    Query params:
+        from (str): 開始日時 yyyymmddHHMM 形式  例: 202606191400
+        to   (str): 終了日時 yyyymmddHHMM 形式  例: 202606191800（省略時は現在）
+
+    Example:
+        /api/decoder_check?from=202606191400&to=202606191800
+    """
+    JST = ZoneInfo("Asia/Tokyo")
+
+    def parse_dt(s):
+        s = s.strip()
+        for fmt in ("%Y%m%d%H%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(s, fmt).replace(tzinfo=JST)
+            except ValueError:
+                pass
+        return None
+
+    from_str = request.args.get('from', '').strip()
+    to_str   = request.args.get('to',   '').strip()
+
+    if not from_str:
+        return jsonify({'error': 'Missing "from" parameter. Use ?from=yyyymmddHHMM'}), 400
+
+    from_dt = parse_dt(from_str)
+    if from_dt is None:
+        return jsonify({'error': f'Invalid "from": {from_str!r}. Use yyyymmddHHMM'}), 400
+
+    if to_str:
+        to_dt = parse_dt(to_str)
+        if to_dt is None:
+            return jsonify({'error': f'Invalid "to": {to_str!r}. Use yyyymmddHHMM'}), 400
+    else:
+        to_dt = datetime.now(JST)
+
+    if to_dt <= from_dt:
+        return jsonify({'error': '"to" must be after "from"'}), 400
+
+    result = get_decoder_status(from_dt, to_dt)
+    if result['status'] == 'db_error':
+        result['message'] = f"DB connection error: {result['error']}"
+    else:
+        result['message'] = (
+            'All decoders present in the specified range.'
+            if not result['missing']
+            else f"Missing: {', '.join(result['missing'])}"
+        )
+    return jsonify(result)
+
+
+@app.route("/check_decoder")
+def check_decoder():
+    """デコーダ動作確認ページ（認証不要、スマホからも使用可能）"""
+    return render_template("check_decoder.html",
+                           decoder_order=DECODER_DISPLAY_ORDER)
 
 
 # ---------------------------------------------------------------------------

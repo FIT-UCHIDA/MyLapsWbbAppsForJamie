@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% block title %}Decoder Check{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-10 col-lg-8">
+
+    <h4 class="mb-3">Decoder Health Check</h4>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-3" id="decoderTabs" role="tablist">
+      <li class="nav-item">
+        <button class="nav-link active" id="live-tab" data-bs-toggle="tab"
+                data-bs-target="#live-panel" type="button">Live Monitor</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" id="range-tab" data-bs-toggle="tab"
+                data-bs-target="#range-panel" type="button">Range Check</button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+
+      <!-- ========== TAB 1: Live Monitor ========== -->
+      <div class="tab-pane fade show active" id="live-panel" role="tabpanel">
+
+        <!-- Status Banner -->
+        <div id="live-banner" class="alert alert-secondary text-center py-3 mb-3">
+          <h3 id="live-status-text" class="mb-1">Connecting...</h3>
+          <p id="live-message" class="mb-0 small"></p>
+        </div>
+
+        <!-- Waiting Progress -->
+        <div id="wait-info" class="mb-3 d-none">
+          <div class="d-flex justify-content-between small text-muted mb-1">
+            <span>Waiting before decoder check...</span>
+            <span><span id="remaining-time">?</span> min remaining</span>
+          </div>
+          <div class="progress" style="height:8px">
+            <div id="wait-progress"
+                 class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                 style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Decoder Grid -->
+        <div id="decoder-grid" class="row g-2 mb-3"></div>
+
+        <!-- Meta + Controls -->
+        <div class="d-flex flex-wrap align-items-center gap-2 text-muted small mb-3">
+          <span>Checked: <strong id="live-checked-at">—</strong></span>
+          <span class="ms-auto">Next refresh in <strong id="refresh-countdown">30</strong>s</span>
+          <button class="btn btn-sm btn-outline-secondary" onclick="fetchLiveStatus()">
+            Refresh Now
+          </button>
+        </div>
+
+        <!-- Settings (collapsible) -->
+        <div class="accordion" id="liveSettings">
+          <div class="accordion-item">
+            <h2 class="accordion-header">
+              <button class="accordion-button collapsed py-2" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#liveSettingsBody">
+                Settings
+              </button>
+            </h2>
+            <div id="liveSettingsBody" class="accordion-collapse collapse">
+              <div class="accordion-body py-2">
+                <div class="row g-2">
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Wait time (min)</label>
+                    <input type="number" id="wait-minutes" class="form-control form-control-sm"
+                           value="5" min="1" max="30">
+                    <div class="form-text">Wait after detecting new DB activity</div>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Check window (min)</label>
+                    <input type="number" id="check-window" class="form-control form-control-sm"
+                           value="30" min="5" max="120">
+                    <div class="form-text">Look-back window for decoder check</div>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Poll interval (sec)</label>
+                    <input type="number" id="poll-interval" class="form-control form-control-sm"
+                           value="30" min="10" max="300">
+                    <div class="form-text">Page auto-refresh interval</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API hint -->
+        <div class="mt-3 p-2 bg-light rounded small text-muted font-monospace">
+          <strong>API:</strong>
+          <code id="live-api-url">/api/decoder_status?wait_minutes=5&amp;check_window_minutes=30</code>
+        </div>
+
+      </div><!-- /live-panel -->
+
+
+      <!-- ========== TAB 2: Range Check ========== -->
+      <div class="tab-pane fade" id="range-panel" role="tabpanel">
+
+        <div class="card mb-3">
+          <div class="card-body">
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-sm-5">
+                <label class="form-label small mb-1">From (JST)</label>
+                <input type="datetime-local" id="range-from" class="form-control form-control-sm">
+              </div>
+              <div class="col-12 col-sm-5">
+                <label class="form-label small mb-1">To (JST)</label>
+                <input type="datetime-local" id="range-to" class="form-control form-control-sm">
+              </div>
+              <div class="col-12 col-sm-2">
+                <button class="btn btn-primary btn-sm w-100" onclick="runRangeCheck()">
+                  Check
+                </button>
+              </div>
+            </div>
+            <div class="mt-2 text-muted small">
+              e.g. check if all decoders fired between 14:00 and 18:00 today
+            </div>
+          </div>
+        </div>
+
+        <!-- Range Result Banner -->
+        <div id="range-banner" class="d-none alert text-center py-3 mb-3">
+          <h4 id="range-status-text" class="mb-1"></h4>
+          <p id="range-message" class="mb-0 small"></p>
+        </div>
+
+        <!-- Range Decoder Table -->
+        <div id="range-result" class="d-none">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small text-muted">
+              <span id="range-from-label"></span> → <span id="range-to-label"></span>
+            </span>
+            <span class="badge bg-secondary" id="range-total-passings"></span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle">
+              <thead class="table-dark">
+                <tr>
+                  <th>Decoder</th>
+                  <th>Status</th>
+                  <th class="d-none d-sm-table-cell">Count</th>
+                  <th class="d-none d-md-table-cell">First Seen (JST)</th>
+                  <th class="d-none d-md-table-cell">Last Seen (JST)</th>
+                  <th class="d-none d-sm-table-cell text-muted small">ID</th>
+                </tr>
+              </thead>
+              <tbody id="range-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Loading spinner -->
+        <div id="range-loading" class="text-center d-none py-3">
+          <div class="spinner-border spinner-border-sm text-primary me-2"></div>
+          Checking...
+        </div>
+
+        <!-- API hint -->
+        <div class="mt-3 p-2 bg-light rounded small text-muted font-monospace">
+          <strong>API:</strong>
+          <code id="range-api-url">/api/decoder_check?from=yyyymmddHHMM&amp;to=yyyymmddHHMM</code>
+        </div>
+
+      </div><!-- /range-panel -->
+
+    </div><!-- /tab-content -->
+  </div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+// -----------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------
+const DECODER_ORDER = {{ decoder_order | tojson }};
+
+// -----------------------------------------------------------------------
+// Shared helpers
+// -----------------------------------------------------------------------
+function fmtDatetime(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  return d.toLocaleString('ja-JP', {
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+function fmtTimeAgo(isoStr) {
+  if (!isoStr) return '';
+  const diffMs  = Date.now() - new Date(isoStr).getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin <  1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  return `${Math.round(diffMin / 60)}h ago`;
+}
+
+// -----------------------------------------------------------------------
+// TAB 1: Live Monitor
+// -----------------------------------------------------------------------
+let liveCountdown  = 30;
+let liveCountdownId = null;
+
+function getBannerClass(status) {
+  return {
+    ok:       'alert-success',
+    error:    'alert-danger',
+    db_error: 'alert-warning',
+    waiting:  'alert-info',
+    idle:     'alert-secondary',
+  }[status] || 'alert-secondary';
+}
+
+function getBannerTitle(stage, status) {
+  if (status === 'ok')       return '✓  All Decoders OK';
+  if (status === 'error')    return '✗  Missing Decoder(s)';
+  if (status === 'db_error') return '⚠  DB Connection Error';
+  if (status === 'waiting')  return '⏳  Waiting...';
+  return '—  No Activity';
+}
+
+function renderDecoderGrid(decoders) {
+  const grid = document.getElementById('decoder-grid');
+  grid.innerHTML = '';
+  if (!decoders || Object.keys(decoders).length === 0) return;
+
+  // Track order first, then any extras
+  const extras  = Object.keys(decoders).filter(k => !DECODER_ORDER.includes(k));
+  const ordered = [...DECODER_ORDER, ...extras];
+
+  ordered.forEach(name => {
+    const d = decoders[name];
+    if (!d) return;
+
+    const col  = document.createElement('div');
+    col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+
+    const border = d.present ? 'border-success' : 'border-danger';
+    const badge  = d.present
+      ? '<span class="badge bg-success">OK</span>'
+      : '<span class="badge bg-danger">MISSING</span>';
+    const timeStr = d.present && d.last_seen
+      ? `<div class="text-muted" style="font-size:.75rem">${fmtTimeAgo(d.last_seen)}</div>`
+      : '';
+    const cnt = (d.count !== undefined && d.count > 0)
+      ? `<div class="text-muted" style="font-size:.7rem">${d.count} pass</div>`
+      : '';
+
+    col.innerHTML = `
+      <div class="card ${border} h-100">
+        <div class="card-body p-2 text-center">
+          <div class="fw-bold fs-5">${name}</div>
+          ${badge}
+          ${timeStr}
+          ${cnt}
+          <div class="text-muted" style="font-size:.65rem">${d.decoder_id || ''}</div>
+        </div>
+      </div>`;
+    grid.appendChild(col);
+  });
+}
+
+function fetchLiveStatus() {
+  const waitMin  = document.getElementById('wait-minutes').value  || 5;
+  const checkWin = document.getElementById('check-window').value  || 30;
+  const apiUrl   = `/api/decoder_status?wait_minutes=${waitMin}&check_window_minutes=${checkWin}`;
+  document.getElementById('live-api-url').textContent = apiUrl;
+
+  fetch(apiUrl)
+    .then(r => r.json())
+    .then(data => {
+      // Banner
+      const banner = document.getElementById('live-banner');
+      banner.className = `alert ${getBannerClass(data.status)} text-center py-3 mb-3`;
+      document.getElementById('live-status-text').textContent = getBannerTitle(data.stage, data.status);
+      document.getElementById('live-message').textContent     = data.message || '';
+
+      // Waiting progress
+      const waitInfo = document.getElementById('wait-info');
+      if (data.stage === 'waiting') {
+        waitInfo.classList.remove('d-none');
+        const rem   = data.remaining_minutes || 0;
+        const total = data.wait_minutes || 5;
+        const pct   = Math.max(0, Math.min(100, ((total - rem) / total) * 100));
+        document.getElementById('wait-progress').style.width = pct + '%';
+        document.getElementById('remaining-time').textContent = rem.toFixed(1);
+      } else {
+        waitInfo.classList.add('d-none');
+      }
+
+      // Decoder grid
+      renderDecoderGrid(data.decoders || {});
+
+      // Checked at
+      document.getElementById('live-checked-at').textContent = fmtDatetime(data.checked_at);
+
+      // Reset countdown
+      liveCountdown = parseInt(document.getElementById('poll-interval').value) || 30;
+    })
+    .catch(err => {
+      document.getElementById('live-banner').className = 'alert alert-warning text-center py-3 mb-3';
+      document.getElementById('live-status-text').textContent = 'Connection Error';
+      document.getElementById('live-message').textContent     = err.message;
+    });
+}
+
+function startLiveCountdown() {
+  if (liveCountdownId) clearInterval(liveCountdownId);
+  liveCountdown = parseInt(document.getElementById('poll-interval').value) || 30;
+  liveCountdownId = setInterval(() => {
+    liveCountdown--;
+    document.getElementById('refresh-countdown').textContent = liveCountdown;
+    if (liveCountdown <= 0) {
+      fetchLiveStatus();
+      liveCountdown = parseInt(document.getElementById('poll-interval').value) || 30;
+    }
+  }, 1000);
+}
+
+// -----------------------------------------------------------------------
+// TAB 2: Range Check
+// -----------------------------------------------------------------------
+function toYYYYmmddHHMM(dtLocalStr) {
+  // datetime-local value: "2026-06-19T14:00"
+  return dtLocalStr.replace(/[-T:]/g, '').slice(0, 12);
+}
+
+function runRangeCheck() {
+  const fromVal = document.getElementById('range-from').value;
+  const toVal   = document.getElementById('range-to').value;
+
+  if (!fromVal) { alert('Please select "From" datetime.'); return; }
+
+  const fromParam = toYYYYmmddHHMM(fromVal);
+  const toParam   = toVal ? toYYYYmmddHHMM(toVal) : '';
+  const apiUrl    = `/api/decoder_check?from=${fromParam}${toParam ? '&to=' + toParam : ''}`;
+  document.getElementById('range-api-url').textContent = apiUrl;
+
+  // Show loading
+  document.getElementById('range-loading').classList.remove('d-none');
+  document.getElementById('range-banner').classList.add('d-none');
+  document.getElementById('range-result').classList.add('d-none');
+
+  fetch(apiUrl)
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('range-loading').classList.add('d-none');
+
+      if (data.error && !data.status) {
+        alert('Error: ' + data.error);
+        return;
+      }
+
+      // Banner
+      const banner = document.getElementById('range-banner');
+      banner.className = `alert ${getBannerClass(data.status)} text-center py-3 mb-3`;
+      banner.classList.remove('d-none');
+      document.getElementById('range-status-text').textContent = getBannerTitle(data.stage || data.status, data.status);
+      document.getElementById('range-message').textContent     = data.message || '';
+
+      // Labels
+      document.getElementById('range-from-label').textContent       = fmtDatetime(data.from_jst);
+      document.getElementById('range-to-label').textContent         = fmtDatetime(data.to_jst);
+      document.getElementById('range-total-passings').textContent   = `${data.total_passings ?? 0} total passings`;
+
+      // Table
+      const tbody = document.getElementById('range-table-body');
+      tbody.innerHTML = '';
+      const decoders = data.decoders || {};
+      const extras   = Object.keys(decoders).filter(k => !DECODER_ORDER.includes(k));
+      const ordered  = [...DECODER_ORDER, ...extras];
+
+      ordered.forEach(name => {
+        const d = decoders[name];
+        if (!d) return;
+        const tr = document.createElement('tr');
+        tr.className = d.present ? '' : 'table-danger';
+        tr.innerHTML = `
+          <td class="fw-bold">${name}</td>
+          <td>${d.present
+            ? '<span class="badge bg-success">OK</span>'
+            : '<span class="badge bg-danger">MISSING</span>'}</td>
+          <td class="d-none d-sm-table-cell">${d.count ?? 0}</td>
+          <td class="d-none d-md-table-cell">${fmtDatetime(d.first_seen)}</td>
+          <td class="d-none d-md-table-cell">${fmtDatetime(d.last_seen)}</td>
+          <td class="d-none d-sm-table-cell text-muted small font-monospace">${d.decoder_id || ''}</td>`;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('range-result').classList.remove('d-none');
+    })
+    .catch(err => {
+      document.getElementById('range-loading').classList.add('d-none');
+      alert('Request failed: ' + err.message);
+    });
+}
+
+// -----------------------------------------------------------------------
+// Init
+// -----------------------------------------------------------------------
+// Pre-fill range-from to today 00:00 JST
+(function initDatetimeInputs() {
+  const now = new Date();
+  // Local datetime-local format: yyyy-MM-ddTHH:mm
+  const pad = n => String(n).padStart(2, '0');
+  const localStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T00:00`;
+  const nowStr   = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  document.getElementById('range-from').value = localStr;
+  document.getElementById('range-to').value   = nowStr;
+})();
+
+fetchLiveStatus();
+startLiveCountdown();
+</script>
+{% endblock %}

@@ -5,7 +5,7 @@ PyQt5依存を除去し、Flask アプリから利用可能にしたもの。
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import os
 import json
 from datetime import datetime, timedelta
@@ -38,6 +38,13 @@ translate_dict = {
     '00042b4e': 'PL3',
     '00042b2e': 'PL4',
 }
+
+# 主要デコーダ（SB1・SW・PL系を除く、トラック計測点のみ）
+MAIN_DECODERS = {k: v for k, v in translate_dict.items()
+                  if v not in ('SB1', 'SW1', 'SW2', 'SW3', 'PL1', 'PL2', 'PL3', 'PL4')}
+
+# 表示順（トラック通過順）
+DECODER_DISPLAY_ORDER = ["FP", "0m", "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m"]
 
 POINT_ORDER = ["FP", "0m", "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m", "FP_END"]
 
@@ -133,6 +140,151 @@ def get_df_from_db(query):
     with engine.connect() as conn:
         df = pd.read_sql(query, conn)
     return df
+
+
+# ---------------------------------------------------------------------------
+# デコーダステータスチェック
+# ---------------------------------------------------------------------------
+
+def get_db_max_timestamp():
+    """DB最新タイムスタンプのみを取得（軽量メタデータチェック用）。
+    変化を検知するための文字列を返す。接続失敗時は None。"""
+    try:
+        engine = create_engine(_get_db_url_from_settings(), pool_pre_ping=True)
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT MAX(timestamp) FROM passing"))
+            row = result.fetchone()
+            return str(row[0]) if row and row[0] is not None else None
+    except Exception:
+        return None
+
+
+def get_decoder_status(from_dt, to_dt=None):
+    """
+    指定時間区間内の各デコーダの信号状況をチェックする。
+
+    Args:
+        from_dt: datetime (タイムゾーン付き推奨) - 開始時刻
+        to_dt:   datetime or None - 終了時刻（Noneなら現在時刻）
+
+    Returns:
+        dict: {
+            'status': 'ok' | 'error',
+            'from_jst': ISO string,
+            'to_jst':   ISO string,
+            'total_passings': int,
+            'decoders': {
+                name: {
+                    'decoder_id': str,
+                    'present': bool,
+                    'count': int,
+                    'first_seen': ISO string | None,
+                    'last_seen':  ISO string | None,
+                }
+            },
+            'missing': [name, ...],
+            'present': [name, ...],
+            'error': None | str,
+        }
+    """
+    JST = ZoneInfo("Asia/Tokyo")
+    UTC = ZoneInfo("UTC")
+
+    if from_dt.tzinfo is None:
+        from_dt = from_dt.replace(tzinfo=JST)
+    from_dt_jst = from_dt.astimezone(JST)
+    from_utc = from_dt.astimezone(UTC)
+
+    if to_dt is None:
+        to_dt = datetime.now(JST)
+    if to_dt.tzinfo is None:
+        to_dt = to_dt.replace(tzinfo=JST)
+    to_dt_jst = to_dt.astimezone(JST)
+    to_utc = to_dt.astimezone(UTC)
+
+    def _to_jst_iso(ts):
+        if ts is None:
+            return None
+        if hasattr(ts, 'tzinfo') and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts.astimezone(JST).isoformat()
+
+    try:
+        engine = create_engine(_get_db_url_from_settings(), pool_pre_ping=True)
+        query = """
+            SELECT decoder_id,
+                   COUNT(*)        AS cnt,
+                   MIN(timestamp)  AS first_seen,
+                   MAX(timestamp)  AS last_seen
+            FROM passing
+            WHERE timestamp >= :from_ts AND timestamp <= :to_ts
+            GROUP BY decoder_id
+        """
+        with engine.connect() as conn:
+            result = conn.execute(text(query), {
+                "from_ts": from_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                "to_ts":   to_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            rows = result.fetchall()
+
+        db_data = {}
+        total_passings = 0
+        for row in rows:
+            dec_id = str(row[0])
+            cnt = int(row[1])
+            total_passings += cnt
+            db_data[dec_id] = {
+                'count':      cnt,
+                'first_seen': _to_jst_iso(row[2]),
+                'last_seen':  _to_jst_iso(row[3]),
+            }
+
+        decoders = {}
+        missing = []
+        present = []
+        for dec_id, dec_name in MAIN_DECODERS.items():
+            if dec_id in db_data:
+                d = db_data[dec_id]
+                decoders[dec_name] = {
+                    'decoder_id': dec_id,
+                    'present':    True,
+                    'count':      d['count'],
+                    'first_seen': d['first_seen'],
+                    'last_seen':  d['last_seen'],
+                }
+                present.append(dec_name)
+            else:
+                decoders[dec_name] = {
+                    'decoder_id': dec_id,
+                    'present':    False,
+                    'count':      0,
+                    'first_seen': None,
+                    'last_seen':  None,
+                }
+                missing.append(dec_name)
+
+        return {
+            'status':         'ok' if not missing else 'error',
+            'from_jst':       from_dt_jst.isoformat(),
+            'to_jst':         to_dt_jst.isoformat(),
+            'total_passings': total_passings,
+            'decoders':       decoders,
+            'missing':        missing,
+            'present':        present,
+            'error':          None,
+        }
+
+    except Exception as e:
+        return {
+            'status':         'db_error',
+            'from_jst':       from_dt_jst.isoformat(),
+            'to_jst':         to_dt_jst.isoformat(),
+            'total_passings': 0,
+            'decoders':       {},
+            'missing':        [],
+            'present':        [],
+            'error':          str(e),
+        }
 
 
 # ---------------------------------------------------------------------------
