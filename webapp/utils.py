@@ -146,6 +146,145 @@ def get_df_from_db(query):
 # デコーダステータスチェック
 # ---------------------------------------------------------------------------
 
+def get_weather_near(start_jst_str, end_jst_str=None):
+    """
+    指定時刻に最も近い気象データを weather_sensor テーブルから取得する。
+
+    Args:
+        start_jst_str: 開始時刻 (JST) 文字列 例: "2026-06-22 09:00:00"
+        end_jst_str:   終了時刻 (JST) 文字列（省略時は最新1件を返す）
+
+    Returns:
+        dict | None: {temperature, humidity, pressure, density, at_jst}
+        humidity は % 表示 (0.54 → 54.0)
+    """
+    try:
+        engine = create_engine(_get_db_url_from_settings(), pool_pre_ping=True)
+        with engine.connect() as conn:
+            if end_jst_str:
+                result = conn.execute(text("""
+                    SELECT temperature, pressure, humidity, density, created_at
+                    FROM weather_sensor
+                    WHERE created_at BETWEEN :start AND :end
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                """), {"start": start_jst_str, "end": end_jst_str})
+            else:
+                result = conn.execute(text("""
+                    SELECT temperature, pressure, humidity, density, created_at
+                    FROM weather_sensor
+                    ORDER BY id DESC
+                    LIMIT 1
+                """))
+            row = result.fetchone()
+
+        # 指定範囲にデータがなければ最新を使用
+        if row is None and end_jst_str:
+            with engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT temperature, pressure, humidity, density, created_at
+                    FROM weather_sensor
+                    ORDER BY id DESC
+                    LIMIT 1
+                """))
+                row = result.fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "temperature": round(float(row[0]), 1),
+            "pressure":    round(float(row[1]), 1),
+            "humidity":    round(float(row[2]) * 100, 1),
+            "density":     round(float(row[3]), 5),
+            "at_jst":      str(row[4]),
+        }
+    except Exception:
+        return None
+
+
+def get_weather_for_timestamps(timestamps_jst, start_jst_str, end_jst_str):
+    """
+    FP_startなどのタイムスタンプリストに対して気象データを線形補間して返す。
+
+    Args:
+        timestamps_jst: list of pd.Timestamp or None (JST naive)
+        start_jst_str:  検索開始時刻文字列 (JST)  例: "2026-06-22 09:00:00"
+        end_jst_str:    検索終了時刻文字列 (JST)
+    Returns:
+        list of dict | None
+        dict: {temperature, pressure, humidity(%), density}
+        データなし or エラー時は None
+    """
+    try:
+        engine = create_engine(_get_db_url_from_settings(), pool_pre_ping=True)
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT temperature, pressure, humidity, density, created_at
+                FROM weather_sensor
+                WHERE created_at BETWEEN :start AND :end
+                ORDER BY created_at ASC
+            """), {"start": start_jst_str, "end": end_jst_str})
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        wdf = pd.DataFrame(
+            [(float(r[0]), float(r[1]), float(r[2]), float(r[3]), r[4]) for r in rows],
+            columns=["temperature", "pressure", "humidity", "density", "created_at"],
+        )
+        wdf["created_at"] = pd.to_datetime(wdf["created_at"])
+        wdf = wdf.sort_values("created_at").reset_index(drop=True)
+
+        results = []
+        for ts in timestamps_jst:
+            if ts is None or pd.isna(ts):
+                results.append(None)
+                continue
+
+            ts_dt = pd.to_datetime(ts)
+
+            before = wdf[wdf["created_at"] <= ts_dt]
+            after  = wdf[wdf["created_at"] >= ts_dt]
+
+            if before.empty and after.empty:
+                results.append(None)
+                continue
+
+            if before.empty:
+                b = a = after.iloc[0]
+                frac = 0.0
+            elif after.empty:
+                b = a = before.iloc[-1]
+                frac = 0.0
+            else:
+                b = before.iloc[-1]
+                a = after.iloc[0]
+                t0, t1 = b["created_at"], a["created_at"]
+                if t0 == t1:
+                    frac = 0.0
+                else:
+                    frac = max(0.0, min(1.0,
+                        (ts_dt - t0).total_seconds() / (t1 - t0).total_seconds()
+                    ))
+
+            def lerp(col, _b=b, _a=a, _f=frac):
+                return float(_b[col]) * (1.0 - _f) + float(_a[col]) * _f
+
+            results.append({
+                "temperature": round(lerp("temperature"), 1),
+                "pressure":    round(lerp("pressure"),    1),
+                "humidity":    round(lerp("humidity") * 100.0, 1),
+                "density":     round(lerp("density"),     5),
+            })
+
+        return results
+
+    except Exception:
+        return None
+
+
 def get_db_max_timestamp():
     """DB最新タイムスタンプのみを取得（軽量メタデータチェック用）。
     変化を検知するための文字列を返す。接続失敗時は None。"""

@@ -30,6 +30,7 @@ from utils import (
     _propagate_imputed_flags_to_kpi,
     legacy_v1_pipeline, compare_pipelines,
     get_db_max_timestamp, get_decoder_status, MAIN_DECODERS, DECODER_DISPLAY_ORDER,
+    get_weather_near, get_weather_for_timestamps,
     SETTINGS_PATH, KPI_INTERVALS_PATH, TRACK_ORDER, NAME_COLUMNS,
 )
 
@@ -701,7 +702,7 @@ def kpi_page():
             columns=[], rows=[], modes=available_modes, current_mode=mode,
             show_all_cols=show_all_cols, show_all_data=show_all_data,
             max_rows=max_rows, start=start_jst, end=end_jst,
-            ids=ids_param, empty=True)
+            ids=ids_param, empty=True, weather_beta_cols=set())
 
     # 行ID付与
     df_all["__row_id"] = range(len(df_all))
@@ -769,45 +770,98 @@ def kpi_page():
                 if not (c.startswith("imputed__") or c == "__row_id")
             ]
 
-    # 補完フラグマップ構築
+    # 気象列（beta）: FP_startの時刻で線形補間してdf_filteredに追加
+    WEATHER_COLS_DEF = [
+        ("Temp(℃)",    "temperature"),
+        ("Press(hPa)", "pressure"),
+        ("Humid(%)",   "humidity"),
+        ("Density",    "density"),
+    ]
+    weather_col_names = []
+    try:
+        if "FP_start" in df_filtered.columns:
+            lap_times = [
+                (df_filtered.at[idx, "FP_start"]
+                 if pd.notna(df_filtered.at[idx, "FP_start"]) else None)
+                for idx in df_filtered.index
+            ]
+            weather_list = get_weather_for_timestamps(lap_times, start_jst, end_jst)
+            if weather_list:
+                for col_name, key in WEATHER_COLS_DEF:
+                    df_filtered[col_name] = [
+                        float(w[key]) if w is not None else float("nan")
+                        for w in weather_list
+                    ]
+                    weather_col_names.append(col_name)
+    except Exception:
+        weather_col_names = []
+
+    # 気象列を最右に追加
+    columns_with_weather = list(columns)
+    for wc in weather_col_names:
+        if wc in df_filtered.columns and wc not in columns_with_weather:
+            columns_with_weather.append(wc)
+
+    # 補完フラグマップ構築（気象列はフラグなし）
     flag_map = {}
-    for c in columns:
+    for c in columns_with_weather:
         fc = f"imputed__{c}"
         if fc in df_filtered.columns:
             flag_map[c] = fc
+
+    # 気象列フォーマット（密度は5桁、その他1桁）
+    _weather_col_set = set(weather_col_names)
+
+    def _fmt_weather(col_name, val):
+        if pd.isna(val):
+            return "", "ZZZ"
+        v = float(val)
+        if col_name == "Density":
+            return f"{v:.5f}", f"{v:015.5f}"
+        return f"{v:.1f}", f"{v:010.1f}"
 
     # テーブルデータ構築
     rows = []
     for idx in df_filtered.index:
         row_data = []
-        for c in columns:
+        for c in columns_with_weather:
             val = df_filtered.at[idx, c]
-            is_imputed = False
-            if c in flag_map:
-                try:
-                    is_imputed = bool(df_filtered.at[idx, flag_map[c]])
-                except Exception:
-                    pass
-            row_data.append({
-                "value": _format_value(val),
-                "imputed": is_imputed,
-                "raw": val if not pd.isna(val) else None,
-                "sort_key": _sort_key(val),
-            })
+            if c in _weather_col_set:
+                fmt_val, sort_val = _fmt_weather(c, val)
+                row_data.append({
+                    "value":    fmt_val,
+                    "imputed":  False,
+                    "raw":      None,
+                    "sort_key": sort_val,
+                })
+            else:
+                is_imputed = False
+                if c in flag_map:
+                    try:
+                        is_imputed = bool(df_filtered.at[idx, flag_map[c]])
+                    except Exception:
+                        pass
+                row_data.append({
+                    "value":    _format_value(val),
+                    "imputed":  is_imputed,
+                    "raw":      val if not pd.isna(val) else None,
+                    "sort_key": _sort_key(val),
+                })
         rows.append(row_data)
 
     # セッションにKPIデータを保存（CSVエクスポート用）
-    session["kpi_columns"] = columns
+    session["kpi_columns"] = columns_with_weather
     session["kpi_start"] = start_jst
     session["kpi_end"] = end_jst
     session["kpi_ids"] = ids_param
     session["kpi_mode"] = mode
 
     return render_template("kpi.html",
-        columns=columns, rows=rows, modes=available_modes, current_mode=mode,
+        columns=columns_with_weather, rows=rows, modes=available_modes, current_mode=mode,
         show_all_cols=show_all_cols, show_all_data=show_all_data,
         max_rows=max_rows, start=start_jst, end=end_jst,
-        ids=ids_param, empty=False)
+        ids=ids_param, empty=False,
+        weather_beta_cols=set(weather_col_names))
 
 
 # ---------------------------------------------------------------------------

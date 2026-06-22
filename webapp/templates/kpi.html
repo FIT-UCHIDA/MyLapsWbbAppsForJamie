@@ -111,7 +111,7 @@
         <thead class="table-dark">
             <tr>
                 {% for col in columns %}
-                <th>{{ col }}</th>
+                <th>{{ col }}{% if col in weather_beta_cols %} <span class="badge bg-secondary" style="font-size:.6rem;vertical-align:middle">β</span>{% endif %}</th>
                 {% endfor %}
             </tr>
         </thead>
