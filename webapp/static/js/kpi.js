@@ -16,6 +16,7 @@ function initKpiTable() {
         pageLength: 50,
         lengthMenu: [25, 50, 100, 200, -1],
         ordering: true,
+        order: [[3, 'desc']],   // FP_start / SB1 を最新順でデフォルトソート
         searching: true,
         info: true,
         scrollX: true,
