@@ -1,7 +1,7 @@
 {
   "settings": {
     "maxRows": 20,
-    "showAllColumns": true,
+    "showAllColumns": false,
     "showAllData": false
   },
   "training1": {
