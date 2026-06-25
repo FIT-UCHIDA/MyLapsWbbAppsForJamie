@@ -47,5 +47,20 @@
   "training4": {
     "mainKPI": null,
     "intervals": []
+  },
+  "rolling": {
+    "mainKPI": "FP_start-BP",
+    "intervals": [
+      {
+        "start": "FP_start",
+        "end": "BP",
+        "name": "FP→BP (125m)"
+      },
+      {
+        "start": "BP",
+        "end": "FP_start",
+        "name": "BP→FP (125m)"
+      }
+    ]
   }
 }

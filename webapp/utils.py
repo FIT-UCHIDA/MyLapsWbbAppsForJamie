@@ -63,7 +63,7 @@ SEGMENTS = [
 
 TRACK_ORDER = [
     "FP_start", "SB1", "0m_start", "60m", "AP1", "50m",
-    "100m", "BP", "150m", "AP2", "200m", "FP_2nd", "0m_2nd",
+    "100m", "BP", "150m", "AP2", "200m", "FP_2nd", "0m_2nd", "BP_2nd",
 ]
 
 NAME_COLUMNS = ["first_name", "last_name", "Date", "FP_start"]
@@ -638,7 +638,7 @@ def split_laps(df, all_data=None):
     empty_cols = [
         "Date", "FP_start", "SB1", "0m_start",
         "60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m",
-        "FP_2nd", "0m_2nd",
+        "FP_2nd", "0m_2nd", "BP_2nd",
     ]
     if not rows:
         return pd.DataFrame(columns=empty_cols)
@@ -669,13 +669,27 @@ def split_laps(df, all_data=None):
     # Web app 互換の列名にリネーム
     result_df = result_df.rename(columns={"FP": "FP_start", "0m": "0m_start"})
 
-    # FP_2nd / 0m_2nd（次ラップの値）
+    # FP_2nd / 0m_2nd / BP_2nd（次ラップの値）
     result_df["FP_2nd"] = (
         result_df["FP_start"].shift(-1) if "FP_start" in result_df.columns else pd.NaT
     )
     result_df["0m_2nd"] = (
         result_df["0m_start"].shift(-1) if "0m_start" in result_df.columns else pd.NaT
     )
+    result_df["BP_2nd"] = (
+        result_df["BP"].shift(-1) if "BP" in result_df.columns else pd.NaT
+    )
+
+    # Rolling effort 修正:
+    # ローリングスタート(BP始まり)の「遷移ラップ」で、FP_start より前の通過記録が
+    # 混入しマイナス時刻になるのを除去する。
+    # FP_start より前のタイムスタンプを持つ中間デコーダは無効（別effortの通過）。
+    if "FP_start" in result_df.columns:
+        fp_col = pd.to_datetime(result_df["FP_start"])
+        for col in ["60m", "AP1", "50m", "100m", "BP", "150m", "AP2", "200m"]:
+            if col in result_df.columns:
+                mask = pd.to_datetime(result_df[col]) < fp_col
+                result_df.loc[mask, col] = pd.NaT
 
     return result_df
 
