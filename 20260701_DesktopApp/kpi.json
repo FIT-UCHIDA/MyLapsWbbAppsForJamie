@@ -1,0 +1,78 @@
+{
+  "version": "ver2",
+  "rolling": [
+    {
+      "start": "FP",
+      "end": "BP",
+      "name": "FP-BP"
+    },
+    {
+      "start": "0m",
+      "end": "0m+1",
+      "name": "0m-0m+1"
+    },
+    {
+      "start": "0m+1",
+      "end": "0m+2",
+      "name": "0m+1-0m+2"
+    },
+    {
+      "start": "0m+2",
+      "end": "0m+3",
+      "name": "0m+2-3"
+    },
+    {
+      "start": "0m+3",
+      "end": "0m+4"
+    }
+  ],
+  "standing": [
+    {
+      "start": "SB1",
+      "end": "60m",
+      "name": "SB1-60m"
+    },
+    {
+      "start": "SB1",
+      "end": "125m",
+      "name": "SB1-125m"
+    },
+    {
+      "start": "SB1",
+      "end": "FP+1",
+      "name": "SB1-FP+1"
+    },
+    {
+      "start": "FP+1",
+      "end": "FP+2",
+      "name": "FP+1-FP+2"
+    },
+    {
+      "start": "FP+2",
+      "end": "FP+3",
+      "name": "FP+2-FP+3"
+    },
+    {
+      "start": "FP+3",
+      "end": "FP+4",
+      "name": "FP+3-FP+4"
+    }
+  ],
+  "flying": [
+    {
+      "start": "50m",
+      "end": "150m",
+      "name": "50-150m"
+    },
+    {
+      "start": "150m",
+      "end": "0m+1",
+      "name": "150-0m+1"
+    },
+    {
+      "start": "50m",
+      "end": "0m+1",
+      "name": "50m-0m+1"
+    }
+  ]
+}

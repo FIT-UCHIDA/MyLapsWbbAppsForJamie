@@ -8,6 +8,7 @@ venv/
 webapp/users/
 webapp/users_config.json
 webapp/settings.json
+20260701_DesktopApp/settings.json
 webapp/backups/
 ec2_archives/
 AWS_testEc2/
