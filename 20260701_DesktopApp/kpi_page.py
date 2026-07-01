@@ -877,18 +877,15 @@ class KPIPage(QWidget):
         # kpi.jsonを読み込む
         self._interval_config = _load_json(KPI_INTERVALS_PATH) or {}
         
-        # versionチェック
+        # versionチェック: "ver2" または未設定（Web版kpi.json互換）を許容
         config_version = self._interval_config.get("version")
-        if config_version != "ver2":
-            version_msg = f"Found: {config_version}" if config_version else "Version key not found"
-            QMessageBox.critical(
+        if config_version is not None and config_version != "ver2":
+            QMessageBox.warning(
                 self,
-                "Version Error",
-                f"Invalid kpi.json version.\nExpected: ver2\n{version_msg}\n\nPlease update kpi.json to version ver2."
+                "Version Warning",
+                f"kpi.json version is '{config_version}' (expected 'ver2' or none).\n"
+                "Processing continues but some features may not work correctly."
             )
-            # アプリを終了
-            import sys
-            sys.exit(1)
         
         # 地点名の検証
         invalid_positions = _validate_position_names(self._interval_config)
@@ -1055,44 +1052,50 @@ class KPIPage(QWidget):
         """
         kpi.jsonから利用可能なモードのリストを取得する。
         "version"と"settings"以外のキーをモードとして返す。
+        リスト形式（legacy-v1）とdict形式（Web版 {"mainKPI":..., "intervals":[...]}）の両方に対応。
         """
         if not self._interval_config:
             return []
-        
+
         modes = []
         for key in self._interval_config.keys():
-            if key != "version" and key != "settings":
-                # 値がリスト（intervals）であることを確認
-                value = self._interval_config[key]
-                if isinstance(value, list):
-                    modes.append(key)
-        
-        return sorted(modes)  # ソートして返す
+            if key in ("version", "settings"):
+                continue
+            value = self._interval_config[key]
+            if isinstance(value, list):
+                modes.append(key)
+            elif isinstance(value, dict) and "intervals" in value:
+                modes.append(key)
+
+        return sorted(modes)
 
     def _display_kpi_columns(self) -> list[str]:
         """
         現在のモード(self.time_mode)について、
         kpi.json の start/end 定義から生成される KPI 列名を返す。
-
-        - name があれば name
-        - なければ "start-end"
+        リスト形式（legacy-v1）とdict形式（Web版）の両方に対応。
         """
         mode = (self.time_mode or "rolling").lower()
         cfg = self._interval_config or {}
-        entries = cfg.get(mode, [])
+        mode_data = cfg.get(mode, [])
+
+        # Web版（dict形式）とlegacy-v1（list形式）の両方に対応
+        if isinstance(mode_data, dict):
+            entries = mode_data.get("intervals", [])
+        elif isinstance(mode_data, list):
+            entries = mode_data
+        else:
+            entries = []
 
         cols: list[str] = []
-        for ent_idx, ent in enumerate(entries):
+        for ent in entries:
             if not isinstance(ent, dict):
                 continue
             start = ent.get("start")
             end = ent.get("end")
             name = ent.get("name")
-            
             if not start or not end:
                 continue
-            
-            # nameがあればname、なければ "start-end" を使用
             col_name = name if name else f"{start}-{end}"
             cols.append(col_name)
 
@@ -1220,9 +1223,17 @@ class KPIPage(QWidget):
         # 現在のモードに基づいてKPI列を計算
         cfg = self._interval_config or {}
         mode = (self.time_mode or "").lower()
-        entries = cfg.get(mode, [])
-        
-        if not isinstance(entries, list):
+        mode_data = cfg.get(mode, [])
+
+        # Web版（dict形式）とlegacy-v1（list形式）の両方に対応
+        if isinstance(mode_data, dict):
+            entries = mode_data.get("intervals", [])
+        elif isinstance(mode_data, list):
+            entries = mode_data
+        else:
+            entries = []
+
+        if not entries:
             return result_df
         
         def parse_position_with_offset(pos_str):
@@ -1237,18 +1248,21 @@ class KPIPage(QWidget):
                 return pos_name, offset
             return pos_str, 0
         
+        # Web版kpi.json列名エイリアス: FP_start→FP、0m_start→0m
+        _POS_ALIAS = {"FP_start": "FP", "0m_start": "0m", "FP_2nd": "FP", "0m_2nd": "0m"}
+
         def find_position_timestamp(position_name, lap_offset=0):
             """
             指定された位置のtimestampを取得（lap番号ベースのオフセットで指定）
-            
-            Args:
-                position_name: 位置名（例: "0m", "FP"）
-                lap_offset: lap番号のオフセット（例: 0=lap0, 1=lap1）
+            Web版kpi.jsonの列名（FP_start, 0m_start）もエイリアスで対応。
             """
+            # Web版の列名をDesktop版に変換
+            pos = _POS_ALIAS.get(position_name, position_name)
+
             # lap_number列が存在するか確認
             if "lap_number" not in result_df.columns:
                 # lap_numberがない場合は従来の方法（位置名の出現回数）
-                matching_rows = result_df[result_df["position"] == position_name]
+                matching_rows = result_df[result_df["position"] == pos]
                 if matching_rows.empty:
                     return None
                 if lap_offset < len(matching_rows):
@@ -1258,12 +1272,12 @@ class KPIPage(QWidget):
             # 指定されたlap番号が存在するか確認
             if lap_offset not in result_df["lap_number"].values:
                 return None
-            
+
             # 指定されたlap番号のデータポイントを取得
             lap_data = result_df[result_df["lap_number"] == lap_offset]
-            
+
             # そのlap内で指定位置を探す
-            matching_rows = lap_data[lap_data["position"] == position_name]
+            matching_rows = lap_data[lap_data["position"] == pos]
             if matching_rows.empty:
                 return None
             
