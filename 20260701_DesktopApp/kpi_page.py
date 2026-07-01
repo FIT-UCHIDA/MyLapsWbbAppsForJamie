@@ -1238,79 +1238,98 @@ class KPIPage(QWidget):
         if not entries:
             return result_df
         
-        def parse_position_with_offset(pos_str):
-            """地点名から位置名とオフセットを抽出（例: "0m+1" -> ("0m", 1)）"""
+        # トラック一周の地点順序（Web版 TRACK_ORDER と同じ）
+        _FULL_ORDER = [
+            "SB1", "FP", "0m", "60m", "AP1", "50m", "100m", "BP",
+            "150m", "AP2", "200m", "FP_2nd", "0m_2nd", "BP_2nd",
+        ]
+        _FULL_IDX = {n: i for i, n in enumerate(_FULL_ORDER)}
+
+        # Web版列名 → (物理地点名, 出現インデックス)
+        # FP_2nd = 同一エフォート内でFPが2回目に現れるもの
+        _POS_ALIAS2 = {
+            "FP_start": ("FP", 0),
+            "0m_start": ("0m", 0),
+            "FP_2nd":   ("FP", 1),
+            "0m_2nd":   ("0m", 1),
+            "BP_2nd":   ("BP", 1),
+        }
+
+        def _parse_legacy_offset(pos_str):
+            """Legacy形式 "0m+1" → ("0m", 1)"""
             if not pos_str:
                 return None, 0
-            match = re.match(r'^(.+?)(\+(\d+))?$', pos_str)
-            if match:
-                pos_name = match.group(1)
-                offset_str = match.group(3)
-                offset = int(offset_str) if offset_str else 0
-                return pos_name, offset
+            m = re.match(r'^(.+?)\+(\d+)$', pos_str)
+            if m:
+                return m.group(1), int(m.group(2))
             return pos_str, 0
-        
-        # Web版kpi.json列名エイリアス: FP_start→FP、0m_start→0m
-        _POS_ALIAS = {"FP_start": "FP", "0m_start": "0m", "FP_2nd": "FP", "0m_2nd": "0m"}
 
-        def find_position_timestamp(position_name, lap_offset=0):
+        def resolve_pos(col_name):
             """
-            指定された位置のtimestampを取得（lap番号ベースのオフセットで指定）
-            Web版kpi.jsonの列名（FP_start, 0m_start）もエイリアスで対応。
+            kpi.json の start/end 列名 → (物理地点名, 出現オフセット, full_track_index)
+            Web形式 (FP_start, FP_2nd, ...) と legacy形式 (0m+1, FP+1, ...) の両方に対応。
             """
-            # Web版の列名をDesktop版に変換
-            pos = _POS_ALIAS.get(position_name, position_name)
+            if col_name in _POS_ALIAS2:
+                phys, occ = _POS_ALIAS2[col_name]
+            else:
+                phys, occ = _parse_legacy_offset(col_name)
+            # full_track_index: オリジナル列名 → 見つからなければ物理名で検索
+            fidx = _FULL_IDX.get(col_name, _FULL_IDX.get(phys))
+            return phys, occ, fidx
 
-            # lap_number列が存在するか確認
+        def find_position_timestamp(physical_pos, occurrence=0):
+            """
+            エフォートデータ内で physical_pos が occurrence 番目(0始まり)に
+            出現するタイムスタンプを返す。
+            """
             if "lap_number" not in result_df.columns:
-                # lap_numberがない場合は従来の方法（位置名の出現回数）
-                matching_rows = result_df[result_df["position"] == pos]
-                if matching_rows.empty:
-                    return None
-                if lap_offset < len(matching_rows):
-                    return matching_rows.iloc[lap_offset]["timestamp"]
+                rows = result_df[result_df["position"] == physical_pos]
+                if occurrence < len(rows):
+                    return rows.iloc[occurrence]["timestamp"]
                 return None
-            
-            # 指定されたlap番号が存在するか確認
-            if lap_offset not in result_df["lap_number"].values:
-                return None
+            # lap_number がある場合は lap ごとに先頭を探す
+            laps = sorted(result_df["lap_number"].unique())
+            hit = 0
+            for ln in laps:
+                lap_rows = result_df[
+                    (result_df["lap_number"] == ln) &
+                    (result_df["position"] == physical_pos)
+                ]
+                if not lap_rows.empty:
+                    if hit == occurrence:
+                        return lap_rows.iloc[0]["timestamp"]
+                    hit += 1
+            return None
 
-            # 指定されたlap番号のデータポイントを取得
-            lap_data = result_df[result_df["lap_number"] == lap_offset]
-
-            # そのlap内で指定位置を探す
-            matching_rows = lap_data[lap_data["position"] == pos]
-            if matching_rows.empty:
-                return None
-            
-            # そのlap内で最初の出現を返す
-            return matching_rows.iloc[0]["timestamp"]
-        
         for ent_idx, ent in enumerate(entries):
             if not isinstance(ent, dict):
                 continue
-                
+
             start_str = ent.get("start")
-            end_str = ent.get("end")
-            name_str = ent.get("name")
-            
+            end_str   = ent.get("end")
+            name_str  = ent.get("name")
+
             if not start_str or not end_str:
                 continue
-            
-            # 位置名とオフセットを解析
-            start_pos, start_offset = parse_position_with_offset(start_str)
-            end_pos, end_offset = parse_position_with_offset(end_str)
-            
+
+            s_phys, s_occ, s_fidx = resolve_pos(start_str)
+            e_phys, e_occ, e_fidx = resolve_pos(end_str)
+
+            # Web版 ensure_interval_columns() の shift(-1) と同じルール:
+            # end が start よりトラック順序で前(idx小)の場合、endの次の出現を使う
+            if s_fidx is not None and e_fidx is not None and s_fidx > e_fidx:
+                e_occ += 1
+
             # 列名はnameを使用（nameがなければ "start-end"）
             col_name = name_str if name_str else f"{start_str}-{end_str}"
-            
+
             # すでに列があるなら再計算しない
             if col_name in result_df.columns:
                 continue
-            
+
             # 開始位置と終了位置のtimestampを取得
-            start_time = find_position_timestamp(start_pos, start_offset)
-            end_time = find_position_timestamp(end_pos, end_offset)
+            start_time = find_position_timestamp(s_phys, s_occ)
+            end_time   = find_position_timestamp(e_phys, e_occ)
             
             # 該当するデータがなければNaN
             if start_time is None or end_time is None:
