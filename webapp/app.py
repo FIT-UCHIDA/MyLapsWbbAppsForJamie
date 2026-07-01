@@ -770,9 +770,14 @@ def kpi_page():
     # 表示列の決定
     kpi_cols = display_kpi_columns(mode, interval_config, df_all)
 
-    # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
+    # Simple表示用の名前列（モードがSB1を使う場合のみFP_startの代わりにSB1を使用）
     simple_name_cols = list(NAME_COLUMNS)
-    if "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
+    _mode_intervals = (interval_config.get(mode) or {}).get("intervals") or []
+    _mode_uses_sb1 = any(
+        ent.get("start") == "SB1" or ent.get("end") == "SB1"
+        for ent in _mode_intervals if isinstance(ent, dict)
+    )
+    if _mode_uses_sb1 and "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
         simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
 
     if show_all_cols:
@@ -957,9 +962,14 @@ def api_export_csv():
 
     kpi_cols = display_kpi_columns(mode, interval_config, df_all)
 
-    # Simple表示用の名前列（SB1がある場合はFP_startの代わりにSB1を使用）
+    # Simple表示用の名前列（モードがSB1を使う場合のみFP_startの代わりにSB1を使用）
     simple_name_cols = list(NAME_COLUMNS)
-    if "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
+    _mode_intervals = (interval_config.get(mode) or {}).get("intervals") or []
+    _mode_uses_sb1 = any(
+        ent.get("start") == "SB1" or ent.get("end") == "SB1"
+        for ent in _mode_intervals if isinstance(ent, dict)
+    )
+    if _mode_uses_sb1 and "SB1" in df_filtered.columns and df_filtered["SB1"].dropna().astype(str).str.strip().ne("").any():
         simple_name_cols = [("SB1" if c == "FP_start" else c) for c in simple_name_cols]
 
     if show_all_cols:

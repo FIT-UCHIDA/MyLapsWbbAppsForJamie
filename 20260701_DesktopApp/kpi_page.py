@@ -1353,6 +1353,17 @@ class KPIPage(QWidget):
         
         return result_df
     
+    def _get_mode_uses_sb1(self) -> bool:
+        """現在のモードがインターバル定義でSB1を使用しているか返す。"""
+        cfg = self._interval_config or {}
+        mode = (self.time_mode or "").lower()
+        mode_data = cfg.get(mode, {})
+        intervals = mode_data.get("intervals", []) if isinstance(mode_data, dict) else []
+        return any(
+            ent.get("start") == "SB1" or ent.get("end") == "SB1"
+            for ent in intervals if isinstance(ent, dict)
+        )
+
     def _compute_kpi_from_laps(self, laps_df: pd.DataFrame) -> pd.DataFrame:
         """
         split_laps()の結果DataFrameにKPI列を追加する。
@@ -1470,12 +1481,16 @@ class KPIPage(QWidget):
             fp_ts  = row.get("FP_start")
             zero_m = row.get("0m_start")
 
-            if _valid(sb1_ts):
+            mode_uses_sb1 = self._get_mode_uses_sb1()
+            if mode_uses_sb1 and _valid(sb1_ts):
                 start_time = pd.to_datetime(sb1_ts)
                 start_type = "SB1"
             elif _valid(fp_ts):
                 start_time = pd.to_datetime(fp_ts)
                 start_type = "FP"
+            elif _valid(sb1_ts):
+                start_time = pd.to_datetime(sb1_ts)
+                start_type = "SB1"
             else:
                 start_time = pd.to_datetime(zero_m) if _valid(zero_m) else None
                 start_type = "0m"
@@ -1558,8 +1573,12 @@ class KPIPage(QWidget):
         total_cols = base_cols_before_kpi + len(kpi_cols)
         self.effort_table.setColumnCount(total_cols)
 
+        # モードがSB1を使うかで3列目のヘッダーを切り替える
+        mode_uses_sb1 = self._get_mode_uses_sb1()
+        ref_col_label = "SB1" if mode_uses_sb1 else "FP"
+
         # ヘッダーラベルを設定
-        headers = ["PlayerName", "Date", "SB1"] + kpi_cols
+        headers = ["PlayerName", "Date", ref_col_label] + kpi_cols
         self.effort_table.setHorizontalHeaderLabels(headers)
 
         # ヘッダーのリサイズモードを設定
@@ -1568,7 +1587,7 @@ class KPIPage(QWidget):
 
         # 列幅を設定
         default_width = 160
-        wider = {"PlayerName": 200, "Date": 200, "SB1": 120}
+        wider = {"PlayerName": 200, "Date": 200, "SB1": 120, "FP": 120}
         for i, header in enumerate(headers):
             self.effort_table.setColumnWidth(i, wider.get(header, default_width))
 
@@ -1589,17 +1608,17 @@ class KPIPage(QWidget):
                     date_str = str(effort["date"])
             self.effort_table.setItem(idx, 1, SortableTextItem(date_str))
 
-            # SB1タイムスタンプ（時刻部分のみ）
-            sb1_str = ""
+            # 3列目: モードがSB1を使う→SB1時刻、使わない→FP_start時刻
+            ref_ts_str = ""
             row_data = effort["data_points"][0] if effort.get("data_points") else {}
-            sb1_val = row_data.get("SB1")
-            if sb1_val is not None:
+            ref_val = row_data.get("SB1") if mode_uses_sb1 else row_data.get("FP_start")
+            if ref_val is not None:
                 try:
-                    if pd.notna(sb1_val):
-                        sb1_str = pd.to_datetime(sb1_val).strftime("%H:%M:%S.%f")[:-3]
+                    if pd.notna(ref_val):
+                        ref_ts_str = pd.to_datetime(ref_val).strftime("%H:%M:%S.%f")[:-3]
                 except Exception:
                     pass
-            self.effort_table.setItem(idx, 2, SortableTextItem(sb1_str))
+            self.effort_table.setItem(idx, 2, SortableTextItem(ref_ts_str))
 
             # KPI列の値を表示
             if row_data:
