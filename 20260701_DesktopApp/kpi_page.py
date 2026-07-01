@@ -111,72 +111,59 @@ def _validate_position_names(config: dict) -> list[str]:
 class NumericTableWidgetItem(QTableWidgetItem):
     """
     数値用のQTableWidgetItem。
-    空欄を常に最後に来るようにソートする。
+    昇順・降順どちらでも空欄を常に末尾に配置する。
     """
+    def _is_empty(self):
+        d = self.data(Qt.EditRole)
+        if d is None:
+            return True
+        if isinstance(d, float) and math.isnan(d):
+            return True
+        return self.text().strip() == ""
+
     def __lt__(self, other):
         """
-        ソート時の比較メソッド。
-        空欄（text()が空またはNone）は常に最後に来るようにする。
+        ソート時の比較。昇順・降順問わず空欄は常に末尾。
+        Qt の降順ソートは比較を逆転する（b.__lt__(a) で a > b を判定）ため、
+        現在のヘッダーソート方向を取得して空欄判定を切り替える。
         """
-        # 自分が空欄かどうかをチェック
-        self_text = self.text() or ""
-        self_data = self.data(Qt.EditRole)
-        
-        # 空欄の判定: text()が空文字列、またはdata(Qt.EditRole)がNone
-        # 注意: data(Qt.EditRole)がNoneの場合、空欄とみなす
-        self_is_empty = False
-        if self_text.strip() == "":
-            # text()が空の場合
-            if self_data is None:
-                # data(Qt.EditRole)もNoneなら確実に空欄
-                self_is_empty = True
-            elif isinstance(self_data, float) and math.isnan(self_data):
-                # NaNの場合も空欄
-                self_is_empty = True
-        
-        # 相手が空欄かどうかをチェック
-        other_text = other.text() or ""
+        self_empty  = self._is_empty()
+        other_empty = other._is_empty() if isinstance(other, NumericTableWidgetItem) else (other.text().strip() == "")
+
+        if self_empty and other_empty:
+            return False  # 同士は等価
+
+        # ヘッダーの現在のソート方向を取得
+        ascending = True
+        table = self.tableWidget()
+        if table:
+            ascending = (table.horizontalHeader().sortIndicatorOrder() == Qt.AscendingOrder)
+
+        if self_empty:
+            # 空欄を末尾に保つ:
+            #   昇順 → self NOT less than other → False
+            #   降順 → Qt は b.__lt__(a) を使うため self=b, other=a のとき True を返すと
+            #           「b < a」→ 「a > b」→ a(value) が前に来る = self(empty) が後ろ ✓
+            return not ascending
+
+        if other_empty:
+            #   昇順 → self IS less than other → True (self が前、empty が後)
+            #   降順 → True を返すと Qt は self < other とみなし、descending では
+            #           other(empty) が前に来る = ✗ → False を返すと等価扱いでもよい
+            return ascending
+
+        # 両方とも値あり: 数値比較
+        self_data  = self.data(Qt.EditRole)
         other_data = other.data(Qt.EditRole)
-        
-        other_is_empty = False
-        if other_text.strip() == "":
-            if other_data is None:
-                other_is_empty = True
-            elif isinstance(other_data, float) and math.isnan(other_data):
-                other_is_empty = True
-        
-        # 自分が空欄の場合
-        if self_is_empty:
-            return False  # 空欄は常に後ろ（昇順では最後に来る）
-        
-        # 相手が空欄の場合
-        if other_is_empty:
-            return True  # 相手が空欄なら自分が前
-        
-        # 両方とも数値として比較（data(Qt.EditRole)を優先）
         try:
-            if self_data is not None and other_data is not None:
-                # EditRoleのデータが数値の場合
-                if isinstance(self_data, (int, float)) and isinstance(other_data, (int, float)):
-                    if math.isnan(self_data) or math.isnan(other_data):
-                        # NaNの場合は空欄扱い
-                        if math.isnan(self_data):
-                            return False
-                        return True
-                    return float(self_data) < float(other_data)
-            
-            # text()から数値を取得して比較
-            if self_text.strip() and other_text.strip():
-                self_val = float(self_text)
-                other_val = float(other_text)
-                return self_val < other_val
+            if isinstance(self_data, (int, float)) and isinstance(other_data, (int, float)):
+                return float(self_data) < float(other_data)
+            return float(self.text()) < float(other.text())
         except (ValueError, TypeError):
             pass
-        
-        # 数値として比較できない場合は文字列として比較
-        return self_text < other_text
+        return False
 
-# -------------------------------------------------------------------------------------- 
+# --------------------------------------------------------------------------------------
 # DataFrame -> Qt Model
 # --------------------------------------------------------------------------------------
 
