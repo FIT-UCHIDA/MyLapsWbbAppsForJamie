@@ -108,6 +108,24 @@ def _validate_position_names(config: dict) -> list[str]:
 # カスタムQTableWidgetItem（空欄を最後にソート）
 # --------------------------------------------------------------------------------------
 
+class SortableTextItem(QTableWidgetItem):
+    """文字列列用。昇順・降順どちらでも空欄を末尾に配置する。"""
+    def __lt__(self, other):
+        self_empty  = self.text().strip() == ""
+        other_empty = other.text().strip() == ""
+        if self_empty and other_empty:
+            return False
+        ascending = True
+        table = self.tableWidget()
+        if table:
+            ascending = (table.horizontalHeader().sortIndicatorOrder() == Qt.AscendingOrder)
+        if self_empty:
+            return not ascending
+        if other_empty:
+            return ascending
+        return self.text() < other.text()
+
+
 class NumericTableWidgetItem(QTableWidgetItem):
     """
     数値用のQTableWidgetItem。
@@ -1569,7 +1587,7 @@ class KPIPage(QWidget):
                     date_str = effort["date"].strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     date_str = str(effort["date"])
-            self.effort_table.setItem(idx, 1, QTableWidgetItem(date_str))
+            self.effort_table.setItem(idx, 1, SortableTextItem(date_str))
 
             # SB1タイムスタンプ（時刻部分のみ）
             sb1_str = ""
@@ -1581,7 +1599,7 @@ class KPIPage(QWidget):
                         sb1_str = pd.to_datetime(sb1_val).strftime("%H:%M:%S.%f")[:-3]
                 except Exception:
                     pass
-            self.effort_table.setItem(idx, 2, QTableWidgetItem(sb1_str))
+            self.effort_table.setItem(idx, 2, SortableTextItem(sb1_str))
 
             # KPI列の値を表示
             if row_data:

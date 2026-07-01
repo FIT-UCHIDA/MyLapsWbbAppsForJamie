@@ -1,78 +1,86 @@
 {
-  "version": "ver2",
-  "rolling": [
-    {
-      "start": "FP",
-      "end": "BP",
-      "name": "FP-BP"
-    },
-    {
-      "start": "0m",
-      "end": "0m+1",
-      "name": "0m-0m+1"
-    },
-    {
-      "start": "0m+1",
-      "end": "0m+2",
-      "name": "0m+1-0m+2"
-    },
-    {
-      "start": "0m+2",
-      "end": "0m+3",
-      "name": "0m+2-3"
-    },
-    {
-      "start": "0m+3",
-      "end": "0m+4"
-    }
-  ],
-  "standing": [
-    {
-      "start": "SB1",
-      "end": "60m",
-      "name": "SB1-60m"
-    },
-    {
-      "start": "SB1",
-      "end": "125m",
-      "name": "SB1-125m"
-    },
-    {
-      "start": "SB1",
-      "end": "FP+1",
-      "name": "SB1-FP+1"
-    },
-    {
-      "start": "FP+1",
-      "end": "FP+2",
-      "name": "FP+1-FP+2"
-    },
-    {
-      "start": "FP+2",
-      "end": "FP+3",
-      "name": "FP+2-FP+3"
-    },
-    {
-      "start": "FP+3",
-      "end": "FP+4",
-      "name": "FP+3-FP+4"
-    }
-  ],
-  "flying": [
-    {
-      "start": "50m",
-      "end": "150m",
-      "name": "50-150m"
-    },
-    {
-      "start": "150m",
-      "end": "0m+1",
-      "name": "150-0m+1"
-    },
-    {
-      "start": "50m",
-      "end": "0m+1",
-      "name": "50m-0m+1"
-    }
-  ]
+  "settings": {
+    "maxRows": -1,
+    "showAllColumns": false,
+    "showAllData": true
+  },
+  "flying": {
+    "mainKPI": "50m-100m",
+    "intervals": [
+      {
+        "end": "150m",
+        "name": "0-100m",
+        "start": "50m"
+      },
+      {
+        "end": "0m_start",
+        "name": "100-200m",
+        "start": "150m"
+      },
+      {
+        "end": "0m_start",
+        "name": "0-200m",
+        "start": "50m"
+      },
+      {
+        "end": "100m",
+        "name": "100m Short",
+        "start": "0m_start"
+      }
+    ]
+  },
+  "start": {
+    "mainKPI": "SB1-BP",
+    "intervals": [
+      {
+        "end": "0m_start",
+        "name": "0-18m",
+        "start": "SB1"
+      },
+      {
+        "end": "60m",
+        "name": "0-60m",
+        "start": "SB1"
+      },
+      {
+        "end": "BP",
+        "name": "0-125m",
+        "start": "SB1"
+      },
+      {
+        "end": "FP_2nd",
+        "name": "0-250m",
+        "start": "SB1"
+      }
+    ]
+  },
+  "training3": {
+    "mainKPI": "FP_start-60m",
+    "intervals": [
+      {
+        "start": "SB1",
+        "end": "BP",
+        "name": "0-125m"
+      },
+      {
+        "start": "BP",
+        "end": "FP_2nd",
+        "name": "125-250m"
+      },
+      {
+        "start": "FP_2nd",
+        "end": "BP",
+        "name": "250-375m"
+      },
+      {
+        "start": "BP",
+        "end": "FP_start",
+        "name": "375-500m"
+      }
+    ]
+  },
+  "training4": {
+    "mainKPI": null,
+    "intervals": []
+  }
 }
