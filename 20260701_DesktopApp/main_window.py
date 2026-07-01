@@ -196,7 +196,8 @@ class MainWindow(QWidget):
         """
 
         # ページ遷移
-        kpi_page = KPIPage(query, self.stacked_widget, selected_ids)
+        kpi_page = KPIPage(query, self.stacked_widget, selected_ids,
+                           start_jst=start_jst, end_jst=end_jst)
         self.stacked_widget.addWidget(kpi_page)
         self.stacked_widget.setCurrentWidget(kpi_page)
     

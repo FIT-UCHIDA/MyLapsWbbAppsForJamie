@@ -866,12 +866,14 @@ class KPIPage(QWidget):
     # ------------------------------------------------------------------
     # 初期化
     # ------------------------------------------------------------------
-    def __init__(self, query: str, stacked_widget, user_ids):
+    def __init__(self, query: str, stacked_widget, user_ids, start_jst=None, end_jst=None):
         super().__init__()
 
         self._base_query = query
         self.stacked_widget = stacked_widget
         self._user_ids = list(map(int, user_ids))
+        self._start_jst = start_jst  # ログ用
+        self._end_jst = end_jst      # ログ用
 
         self._settings = _load_json(SETTINGS_PATH)
         # kpi.jsonを読み込む
@@ -1546,7 +1548,52 @@ class KPIPage(QWidget):
         
         # エフォートテーブルを更新
         self._update_effort_table_display()
-    
+
+        # 操作ログ書き出し（比較スクリプト用）
+        self._write_operation_log()
+
+    def _write_operation_log(self):
+        """エフォート検出結果を kpi_log.jsonl に追記する。比較スクリプト用。"""
+        import json as _json
+        if not hasattr(self, '_efforts_data') or not self._efforts_data:
+            return
+        kpi_cols = self._display_kpi_columns()
+        effort_log = []
+        for effort in self._efforts_data:
+            kpi_vals = {}
+            if effort.get("data_points"):
+                edf = pd.DataFrame(effort["data_points"])
+                for kc in kpi_cols:
+                    if kc in edf.columns:
+                        valid = pd.to_numeric(edf[kc], errors="coerce").dropna()
+                        kpi_vals[kc] = round(float(valid.iloc[0]), 4) if len(valid) > 0 else None
+                    else:
+                        kpi_vals[kc] = None
+            st = effort.get("start_time")
+            dt = effort.get("date")
+            effort_log.append({
+                "player": effort.get("player_name"),
+                "date": dt.isoformat() if hasattr(dt, "isoformat") else str(dt) if dt else None,
+                "start": st.isoformat() if hasattr(st, "isoformat") else str(st) if st else None,
+                "start_type": effort.get("start_type"),
+                "kpi": kpi_vals,
+            })
+        entry = {
+            "session_ts": __import__("datetime").datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "params": {
+                "start": self._start_jst,
+                "end": self._end_jst,
+                "ids": list(self._user_ids),
+            },
+            "mode": self.time_mode,
+            "effort_count": len(effort_log),
+            "efforts": effort_log,
+        }
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kpi_log.jsonl")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+        print(f"[ログ] {len(effort_log)} エフォート → {log_path}")
+
     def _update_effort_table_display(self):
         """エフォートテーブルの表示を更新（モード変更時にも呼び出される）"""
         if not hasattr(self, '_efforts_data') or not self._efforts_data:
