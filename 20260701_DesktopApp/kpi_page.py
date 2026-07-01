@@ -1348,223 +1348,144 @@ class KPIPage(QWidget):
         
         return result_df
     
+    def _compute_kpi_from_laps(self, laps_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        split_laps()の結果DataFrameにKPI列を追加する。
+        Web版 ensure_interval_columns() と同じロジック:
+        start > end in TRACK_ORDER ならば e.shift(-1) を使う。
+        """
+        if laps_df.empty:
+            return laps_df
+
+        result_df = laps_df.copy()
+
+        cfg = self._interval_config or {}
+        mode = (self.time_mode or "").lower()
+        mode_data = cfg.get(mode, [])
+        if isinstance(mode_data, dict):
+            entries = mode_data.get("intervals", [])
+        elif isinstance(mode_data, list):
+            entries = mode_data
+        else:
+            return result_df
+
+        TRACK_ORDER = [
+            "SB1", "FP", "0m", "60m", "AP1", "50m", "100m", "BP",
+            "150m", "AP2", "200m", "FP_2nd", "0m_2nd", "BP_2nd",
+        ]
+        pos_index = {n: i for i, n in enumerate(TRACK_ORDER)}
+        col_to_key = {"FP_start": "FP", "0m_start": "0m"}
+
+        for ent in entries:
+            if not isinstance(ent, dict):
+                continue
+            start_col = ent.get("start")
+            end_col   = ent.get("end")
+            col_name  = ent.get("name") or f"{start_col}-{end_col}"
+            if not start_col or not end_col:
+                continue
+            if start_col not in result_df.columns or end_col not in result_df.columns:
+                print(f"[KPI] 列不足: {start_col} または {end_col}")
+                continue
+
+            idx_s = pos_index.get(col_to_key.get(start_col, start_col))
+            idx_e = pos_index.get(col_to_key.get(end_col, end_col))
+
+            s = pd.to_datetime(result_df[start_col])
+            e = pd.to_datetime(result_df[end_col])
+
+            if idx_s is not None and idx_e is not None and idx_s > idx_e:
+                e_series = e.shift(-1)
+            else:
+                e_series = e
+
+            diff = (e_series - s).dt.total_seconds()
+            diff = diff.where(diff >= 0)  # マイナス値はNaN
+            result_df[col_name] = diff.round(3)
+
+        return result_df
+
     def _detect_and_display_efforts(self):
         """
-        エフォートを検出してテーブルに表示する。
-        
-        ルール:
-        - 0mを検出（起点0m）
-        - 起点0mから5秒前の区間にSB1があればstartとしてその時刻を、SB1がなくFPがあればその時刻をstartに設定。どちらもなければエフォートIDを採番しない
-        - 起点0m以降のFPをすべて取得。FPの間隔が30秒以上開く箇所を探し、その30秒以上開いたFPまでを同一エフォートデータとして保持
-        - これを0m毎に繰り返す
+        split_laps() でラップ分割し、Web版と同じパイプラインでKPIを計算する。
+        Web版の split_laps() + ensure_interval_columns() 相当。
         """
-        efforts = []  # 最初に初期化
-                
-        # 必要な列の存在確認
-        if "user_id" not in self.df_all.columns or "position" not in self.df_all.columns or "timestamp" not in self.df_all.columns:
-            self.effort_table.setRowCount(0)
+        from utils import split_laps
+
+        if self.df_all.empty:
             self._efforts_data = []
+            self.effort_table.setRowCount(0)
             return
-        
-        # 選手名の列を確認
-        has_first_name = "first_name" in self.df_all.columns
-        has_last_name = "last_name" in self.df_all.columns
-        
-        # Date列を確認
-        has_date = "Date" in self.df_all.columns
-        
-        # user_idが空欄のSB1データを取得（全選手で共有）
-        sb1_no_user = self.df_all[
-            (self.df_all["position"] == "SB1") & 
-            (self.df_all["user_id"].isna() | (self.df_all["user_id"] == ""))
-        ].copy()
-        
-        # 選手ごとにグループ化
-        for user_id, group in self.df_all.groupby("user_id"):
-            # user_idが空欄のグループはスキップ（SB1は後でマージする）
-            if pd.isna(user_id) or user_id == "":
-                continue
-            
-            # 選手名を取得
-            player_name = "Unknown"
-            if has_first_name or has_last_name:
-                first_row = group.iloc[0]
-                name_parts = []
-                if has_first_name and pd.notna(first_row.get("first_name")):
-                    name_parts.append(str(first_row["first_name"]))
-                if has_last_name and pd.notna(first_row.get("last_name")):
-                    name_parts.append(str(first_row["last_name"]))
-                if name_parts:
-                    player_name = " ".join(name_parts)
-            
-            
-            # この選手のデータとuser_idが空欄のSB1データをマージ
-            group_with_sb1 = pd.concat([group, sb1_no_user], ignore_index=True)
-            
-            # 時系列でソート
-            group_sorted_all = group_with_sb1.sort_values("timestamp").reset_index(drop=True)
-            
-            # 0mの位置を持つ行を検出
-            zero_m_rows = group_sorted_all[group_sorted_all["position"] == "0m"].copy()
-            
-            if zero_m_rows.empty:
-                continue
-            
-            # 各0mについて独立にエフォートを検出
-            for idx in range(len(zero_m_rows)):
-                zero_m_row = zero_m_rows.iloc[idx]
-                zero_m_time = zero_m_row["timestamp"]  # 起点0m
-                
-                if pd.isna(zero_m_time):
+
+        # ユーザーごとに split_laps を実行（shift(-1)がユーザー境界をまたがないよう）
+        print("[split_laps] 実行中...")
+        all_laps = []
+        if "user_id" in self.df_all.columns:
+            for uid, group in self.df_all.groupby("user_id"):
+                if pd.isna(uid) or str(uid) == "":
                     continue
-                
-                # 起点0mから5秒前の区間にSB1またはFPがあるかチェック
-                start_time = None
-                start_type = None
-                
-                # 全データから、起点0mの5秒前から起点0mまでの範囲でSB1またはFPを探す
-                check_start_time = zero_m_time - pd.Timedelta(seconds=5)
-                
-                # 検索範囲内の行を取得
-                mask = (group_sorted_all["timestamp"] >= check_start_time) & (group_sorted_all["timestamp"] <= zero_m_time)
-                search_rows = group_sorted_all[mask]
-                
-                # SB1を優先して検索
-                sb1_rows = search_rows[search_rows["position"] == "SB1"]
-                if not sb1_rows.empty:
-                    start_time = sb1_rows.iloc[-1]["timestamp"]  # 最後のSB1（0mに最も近い）
-                    start_type = "SB1"
-                else:
-                    # FPを検索
-                    fp_rows = search_rows[search_rows["position"] == "FP"]
-                    if not fp_rows.empty:
-                        start_time = fp_rows.iloc[-1]["timestamp"]  # 最後のFP（0mに最も近い）
-                        start_type = "FP"
-                
-                # startが設定されていない場合はエフォートIDを採番しない
-                if start_time is None:
-                    continue
-                
-                # startから30秒以内のFPを順に追跡
-                # 見つからなくなるまで繰り返し、最後のFPから30秒後までのデータをエフォートとして確定
-                current_time = start_time
-                last_fp_time = None
-                
-                # 起点0m以降のすべてのFPを時系列で取得
-                fp_rows_after = group_sorted_all[
-                    (group_sorted_all["timestamp"] > zero_m_time) & 
-                    (group_sorted_all["position"] == "FP")
-                ]
-                fps_after_zero_m = fp_rows_after["timestamp"].tolist()
-                
-                # startから30秒以内のFPを順に追跡
-                while True:
-                    # current_timeから30秒以内のFPを探す
-                    found_fp = None
-                    for fp_time in fps_after_zero_m:
-                        time_diff = (fp_time - current_time).total_seconds()
-                        if 0 < time_diff <= 30:
-                            found_fp = fp_time
-                            break
-                    
-                    if found_fp is None:
-                        # 30秒以内のFPが見つからなかった
-                        if last_fp_time is None:
-                            # FPが1つも見つからなかった場合
-                            # startから30秒後までのデータを含める
-                            end_time = start_time + pd.Timedelta(seconds=30)
-                            
-                            # startから30秒後までの間にあるすべてのデータポイントを取得
-                            mask = (group_sorted_all["timestamp"] >= start_time) & (group_sorted_all["timestamp"] <= end_time)
-                            effort_data = group_sorted_all[mask].sort_values("timestamp")
-                            
-                            # 辞書形式に変換
-                            effort_data_points = effort_data.to_dict("records")
-                            
-                            start_date = zero_m_row.get("Date") if has_date else start_time
-                            efforts.append({
-                                "player_name": player_name,
-                                "date": start_date,
-                                "start_time": start_time,
-                                "start_type": start_type,
-                                "data_points": effort_data_points
-                            })
-                            break
-                        else:
-                            # 最後のFPから30秒後までのデータをエフォートとして確定
-                            end_time = last_fp_time + pd.Timedelta(seconds=30)
-                            
-                            # startからend_timeまでの間にあるすべてのデータポイントを取得
-                            mask = (group_sorted_all["timestamp"] >= start_time) & (group_sorted_all["timestamp"] <= end_time)
-                            effort_data = group_sorted_all[mask].sort_values("timestamp")
-                            
-                            # 辞書形式に変換
-                            effort_data_points = effort_data.to_dict("records")
-                            
-                            # エフォートを確定
-                            start_date = zero_m_row.get("Date") if has_date else start_time
-                            efforts.append({
-                                "player_name": player_name,
-                                "date": start_date,
-                                "start_time": start_time,
-                                "start_type": start_type,
-                                "data_points": effort_data_points
-                            })
-                            break
-                    else:
-                        # 見つかったFPを次のcurrent_timeとして設定
-                        last_fp_time = found_fp
-                        current_time = found_fp
-        
-        # エフォートごとにKPIを計算
-        print(f"[エフォート検出] 合計 {len(efforts)} 個のエフォートを検出")
-        
-        # KPI列のリストを取得（現在のモードに基づく）
-        kpi_cols = self._display_kpi_columns()
-        
-        valid_efforts = []
-        for effort_idx, effort in enumerate(efforts):
-            if not effort.get("data_points"):
-                continue
-            
-            # data_pointsをDataFrameに変換
-            effort_df = pd.DataFrame(effort["data_points"])
-            
-            if effort_df.empty:
-                continue
-            
-            # KPI列を計算（start_typeとstart_timeを渡す）
-            effort_df_with_kpi = self._calculate_kpi_for_effort(
-                effort_df, 
-                start_type=effort.get("start_type"),
-                start_time=effort.get("start_time")
-            )
-            
-            # 計算したKPI列を含むdata_pointsに更新
-            effort["data_points"] = effort_df_with_kpi.to_dict("records")
-            
-            # マイナスのKPI値が含まれるかチェック
-            has_negative_kpi = False
-            for kpi_col in kpi_cols:
-                if kpi_col in effort_df_with_kpi.columns:
-                    kpi_values = pd.to_numeric(effort_df_with_kpi[kpi_col], errors='coerce')
-                    valid_values = kpi_values.dropna()
-                    if len(valid_values) > 0:
-                        # マイナスの値が含まれているかチェック
-                        if (valid_values < 0).any():
-                            has_negative_kpi = True
-                            break
-            
-            # マイナスのKPI値が含まれていない場合のみ追加
-            if not has_negative_kpi:
-                valid_efforts.append(effort)
+                user_laps = split_laps(group.reset_index(drop=True), all_data=self.df_all)
+                if not user_laps.empty:
+                    if "first_name" in group.columns:
+                        user_laps["first_name"] = group["first_name"].iloc[0]
+                    if "last_name" in group.columns:
+                        user_laps["last_name"] = group["last_name"].iloc[0]
+                    user_laps["user_id"] = uid
+                    all_laps.append(user_laps)
+        else:
+            laps = split_laps(self.df_all, all_data=self.df_all)
+            if not laps.empty:
+                all_laps.append(laps)
+
+        if not all_laps:
+            self._efforts_data = []
+            self.effort_table.setRowCount(0)
+            return
+
+        laps_df = pd.concat(all_laps, ignore_index=True)
+        print(f"[split_laps] {len(laps_df)} ラップ検出")
+
+        # KPI列を計算（Web版 ensure_interval_columns と同じロジック）
+        kpi_laps_df = self._compute_kpi_from_laps(laps_df)
+
+        # _efforts_data 構造に変換（テーブル表示・ログ互換）
+        efforts = []
+        for _, row in kpi_laps_df.iterrows():
+            fn = str(row.get("first_name") or "")
+            ln = str(row.get("last_name") or "")
+            player_name = f"{fn} {ln}".strip() or str(row.get("user_id", "Unknown"))
+
+            def _valid(v):
+                try:
+                    return v is not None and pd.notna(v)
+                except Exception:
+                    return False
+
+            sb1_ts = row.get("SB1")
+            fp_ts  = row.get("FP_start")
+            zero_m = row.get("0m_start")
+
+            if _valid(sb1_ts):
+                start_time = pd.to_datetime(sb1_ts)
+                start_type = "SB1"
+            elif _valid(fp_ts):
+                start_time = pd.to_datetime(fp_ts)
+                start_type = "FP"
             else:
-                print(f"[エフォート除外] マイナスのKPI値が含まれるエフォートを除外: {effort.get('player_name', 'Unknown')} - {effort.get('date', 'Unknown')}")
-        
-        # エフォートデータを保持
-        self._efforts_data = valid_efforts.copy() if valid_efforts else []
-        print(f"[エフォート検出] 有効なエフォート: {len(self._efforts_data)} 個（除外: {len(efforts) - len(self._efforts_data)} 個）")
-        
+                start_time = pd.to_datetime(zero_m) if _valid(zero_m) else None
+                start_type = "0m"
+
+            efforts.append({
+                "player_name": player_name,
+                "date": start_time,
+                "start_time": start_time,
+                "start_type": start_type,
+                "data_points": [row.to_dict()],  # 1ラップ分（既存コードと互換）
+            })
+
+        self._efforts_data = efforts
+        print(f"[KPI] {len(efforts)} ラップ → テーブル表示")
+
         # エフォートテーブルを更新
         self._update_effort_table_display()
 
@@ -1627,34 +1548,34 @@ class KPIPage(QWidget):
         # データ設定前にソートを無効化（列数変更やデータ設定時の干渉を防ぐ）
         self.effort_table.setSortingEnabled(False)
         
-        # エフォートテーブルの列数を設定: 選手名、日時、[KPI列...]
-        base_cols_before_kpi = 2  # 選手名、日時
+        # エフォートテーブルの列数を設定: 選手名、日時、SB1、[KPI列...]
+        base_cols_before_kpi = 3  # 選手名、日時、SB1
         total_cols = base_cols_before_kpi + len(kpi_cols)
         self.effort_table.setColumnCount(total_cols)
-        
+
         # ヘッダーラベルを設定
-        headers = ["PlayerName", "Date"] + kpi_cols
+        headers = ["PlayerName", "Date", "SB1"] + kpi_cols
         self.effort_table.setHorizontalHeaderLabels(headers)
-        
-        # ヘッダーのリサイズモードを設定（下のテーブルと同じ仕様）
+
+        # ヘッダーのリサイズモードを設定
         hh = self.effort_table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.Interactive)
-        
+
         # 列幅を設定
         default_width = 160
-        wider = {"PlayerName":220, "Date": 220}
+        wider = {"PlayerName": 200, "Date": 200, "SB1": 120}
         for i, header in enumerate(headers):
             self.effort_table.setColumnWidth(i, wider.get(header, default_width))
-        
+
         # エフォートテーブルを更新
         self.effort_table.setRowCount(len(efforts))
         for idx, effort in enumerate(efforts):
             # 選手名（エフォートのインデックスをuserDataとして保存）
             player_item = QTableWidgetItem(str(effort["player_name"]))
-            player_item.setData(Qt.UserRole, idx)  # エフォートのインデックスを保存
+            player_item.setData(Qt.UserRole, idx)
             self.effort_table.setItem(idx, 0, player_item)
-            
-            # 日時
+
+            # 日時（start_time: SB1 or FP_start or 0m_start）
             date_str = ""
             if effort["date"] is not None:
                 if isinstance(effort["date"], (pd.Timestamp, datetime.datetime)):
@@ -1662,38 +1583,40 @@ class KPIPage(QWidget):
                 else:
                     date_str = str(effort["date"])
             self.effort_table.setItem(idx, 1, QTableWidgetItem(date_str))
-            
+
+            # SB1タイムスタンプ（時刻部分のみ）
+            sb1_str = ""
+            row_data = effort["data_points"][0] if effort.get("data_points") else {}
+            sb1_val = row_data.get("SB1")
+            if sb1_val is not None:
+                try:
+                    if pd.notna(sb1_val):
+                        sb1_str = pd.to_datetime(sb1_val).strftime("%H:%M:%S.%f")[:-3]
+                except Exception:
+                    pass
+            self.effort_table.setItem(idx, 2, QTableWidgetItem(sb1_str))
+
             # KPI列の値を表示
-            if effort.get("data_points") and len(effort["data_points"]) > 0:
-                effort_df = pd.DataFrame(effort["data_points"])
-                
+            if row_data:
+                effort_df = pd.DataFrame([row_data])
                 for kpi_idx, kpi_col in enumerate(kpi_cols):
                     col_idx = base_cols_before_kpi + kpi_idx
-                    
                     if kpi_col in effort_df.columns:
-                        # KPI列の値を取得（エフォート全体で計算された値）
-                        kpi_values = pd.to_numeric(effort_df[kpi_col], errors='coerce')
-                        # NaN以外の値を取得（通常は1つの値のはず）
+                        kpi_values = pd.to_numeric(effort_df[kpi_col], errors="coerce")
                         valid_values = kpi_values.dropna()
-                        
                         if len(valid_values) > 0:
-                            # 最初の有効な値を使用（通常は1つだけ）
                             kpi_value = valid_values.iloc[0]
-                            # 数値型として設定（ソート時に数値として比較される）
                             item = NumericTableWidgetItem()
                             item.setData(Qt.EditRole, float(kpi_value))
-                            # 表示用に小数点以下3桁でフォーマット
                             item.setText(f"{kpi_value:.3f}")
                             self.effort_table.setItem(idx, col_idx, item)
                         else:
-                            # 空欄はカスタムクラスを使用（ソート時に最後に来る）
                             empty_item = NumericTableWidgetItem("")
-                            empty_item.setData(Qt.EditRole, None)  # 明示的にNoneを設定
+                            empty_item.setData(Qt.EditRole, None)
                             self.effort_table.setItem(idx, col_idx, empty_item)
                     else:
-                        # 空欄はカスタムクラスを使用（ソート時に最後に来る）
                         empty_item = NumericTableWidgetItem("")
-                        empty_item.setData(Qt.EditRole, None)  # 明示的にNoneを設定
+                        empty_item.setData(Qt.EditRole, None)
                         self.effort_table.setItem(idx, col_idx, empty_item)
         
         # データ設定後にソートを再度有効化
