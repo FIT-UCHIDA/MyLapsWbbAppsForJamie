@@ -488,6 +488,26 @@ def main_page():
 
 
 # ---------------------------------------------------------------------------
+# ヘルパー: 日付範囲バリデーション（最大7日間）
+# ---------------------------------------------------------------------------
+_MAX_DATE_RANGE_DAYS = 7
+
+def _validate_date_range(start_jst: str, end_jst: str):
+    """期間が最大7日間以内かチェック。超えていれば ValueError を送出。"""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    try:
+        s = datetime.strptime(start_jst, fmt)
+        e = datetime.strptime(end_jst, fmt)
+    except ValueError:
+        raise ValueError("日付フォーマットが不正です (YYYY-MM-DD HH:MM:SS)")
+    if e <= s:
+        raise ValueError("終了日時は開始日時より後にしてください")
+    delta = e - s
+    if delta.days >= _MAX_DATE_RANGE_DAYS:
+        raise ValueError(f"期間は{_MAX_DATE_RANGE_DAYS}日以内で指定してください（指定: {delta.days}日）")
+
+
+# ---------------------------------------------------------------------------
 # API: 選手一覧
 # ---------------------------------------------------------------------------
 
@@ -500,6 +520,11 @@ def api_players():
 
     if not start_jst or not end_jst:
         return jsonify({"error": "日付を指定してください"}), 400
+
+    try:
+        _validate_date_range(start_jst, end_jst)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     # 日付を settings.json に保存
     user_settings_path = _get_user_settings_path()
@@ -649,6 +674,12 @@ def kpi_page():
 
     if not start_jst or not end_jst or not ids_param:
         flash("パラメータが不足しています。メインページから操作してください。", "error")
+        return redirect(url_for("main_page"))
+
+    try:
+        _validate_date_range(start_jst, end_jst)
+    except ValueError as e:
+        flash(str(e), "error")
         return redirect(url_for("main_page"))
 
     user_ids = [int(x) for x in ids_param.split(",") if x.strip()]
