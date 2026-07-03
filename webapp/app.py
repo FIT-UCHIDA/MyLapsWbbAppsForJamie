@@ -816,10 +816,17 @@ def kpi_page():
     weather_col_names = []
     try:
         if "FP_start" in df_filtered.columns:
+            # 気象を全行に付与: 各行で利用可能な最初の通過時刻を代表時刻に使う
+            # （StandingはFP_startが空なのでSB1等の実測時刻が使われる）
+            _wx_ref_cols = [c for c in ["FP_start", "SB1", "0m_start", "60m", "AP1",
+                                        "50m", "100m", "BP", "150m", "AP2", "200m"]
+                            if c in df_filtered.columns]
+            _wx_ref = df_filtered[_wx_ref_cols].apply(
+                lambda s: pd.to_datetime(s, errors="coerce"))
             lap_times = [
-                (df_filtered.at[idx, "FP_start"]
-                 if pd.notna(df_filtered.at[idx, "FP_start"]) else None)
-                for idx in df_filtered.index
+                (t if pd.notna(t) else None)
+                for t in _wx_ref.apply(
+                    lambda r: r.dropna().min() if r.notna().any() else pd.NaT, axis=1)
             ]
             weather_list = get_weather_for_timestamps(lap_times, start_jst, end_jst)
             if weather_list:
@@ -885,6 +892,17 @@ def kpi_page():
                 })
         rows.append(row_data)
 
+    # 行ごとの優先度計算（SB1モード→SB1あり=1, FPモード→FP_startあり=1, それ以外=0）
+    # DataTables の orderFixed で「参照センサーあり行を常に上」に固定するために使用
+    _ref_col_for_priority = "SB1" if _mode_uses_sb1 else "FP_start"
+    priorities = []
+    for idx in df_filtered.index:
+        _has_ref = (
+            _ref_col_for_priority in df_filtered.columns
+            and pd.notna(df_filtered.at[idx, _ref_col_for_priority])
+        )
+        priorities.append(1 if _has_ref else 0)
+
     # セッションにKPIデータを保存（CSVエクスポート用）
     session["kpi_columns"] = columns_with_weather
     session["kpi_start"] = start_jst
@@ -897,7 +915,8 @@ def kpi_page():
         show_all_cols=show_all_cols, show_all_data=show_all_data,
         max_rows=max_rows, start=start_jst, end=end_jst,
         ids=ids_param, empty=False,
-        weather_beta_cols=set(weather_col_names))
+        weather_beta_cols=set(weather_col_names),
+        priorities=priorities)
 
 
 # ---------------------------------------------------------------------------
@@ -1536,6 +1555,17 @@ def check_decoder():
 @login_required
 def help_page():
     return render_template("help.html")
+
+
+# ---------------------------------------------------------------------------
+# プログラマーズマニュアル（自己完結HTMLを静的配信。Jinja処理を避けるため
+# render_template ではなく send_from_directory を使う）
+# ---------------------------------------------------------------------------
+
+@app.route("/manual")
+@login_required
+def manual_page():
+    return send_from_directory(APP_DIR, "manual.html")
 
 
 # ---------------------------------------------------------------------------
